@@ -1,7 +1,23 @@
+#!/usr/bin/env python
+# Copyright 2017 Uber Technologies, Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 import os
 import errno
 import tensorflow as tf
-#import horovod.tensorflow as hvd
+import distributed as hvd
 import numpy as np
 
 from tensorflow import keras
@@ -63,8 +79,8 @@ def train_input_generator(x_train, y_train, batch_size=64):
 
 def main(_):
     # Horovod: initialize Horovod.
-    # hvd.init()
-    
+    hvd.init()
+
     # Keras automatically creates a cache directory in ~/.keras/datasets for
     # storing the downloaded MNIST data. This creates a race
     # condition among the workers that share the same filesystem. If the
@@ -82,7 +98,7 @@ def main(_):
 
     # Download and load MNIST dataset.
     (x_train, y_train), (x_test, y_test) = \
-        keras.datasets.mnist.load_data('MNIST-data-%d' % 1)#'hvd.rank()')
+        keras.datasets.mnist.load_data('MNIST-data-%d' % 0)#hvd.rank())
 
     # The shape of downloaded data is (-1, 28, 28), hence we need to reshape it
     # into (-1, 784) to feed into our network. Also, need to normalize the
@@ -97,10 +113,10 @@ def main(_):
     predict, loss = conv_model(image, label, tf.estimator.ModeKeys.TRAIN)
 
     # Horovod: adjust learning rate based on number of GPUs.
-    opt = tf.train.RMSPropOptimizer(0.001 * 1)#hvd.size())
+    opt = tf.train.RMSPropOptimizer(0.001)# * hvd.size())
 
     # Horovod: add Horovod Distributed Optimizer.
-    # opt = hvd.DistributedOptimizer(opt)
+    opt = hvd.DistributedOptimizer(opt)
 
     global_step = tf.train.get_or_create_global_step()
     train_op = opt.minimize(loss, global_step=global_step)
@@ -110,23 +126,22 @@ def main(_):
         # from rank 0 to all other processes. This is necessary to ensure consistent
         # initialization of all workers when training is started with random weights
         # or restored from a checkpoint.
-        #hvd.BroadcastGlobalVariablesHook(0),
+        hvd.BroadcastGlobalVariablesHook(0),
 
         # Horovod: adjust number of steps based on number of GPUs.
-        tf.train.StopAtStepHook(last_step=20000 // 1),#hvd.size()),
-
-        tf.train.LoggingTensorHook(tensors={'step': global_step, 'loss': loss},
-                                   every_n_iter=10),
+        tf.train.StopAtStepHook(last_step=20000 // hvd.size()),
     ]
+
+    if hvd.rank()==0: hooks.append(tf.train.LoggingTensorHook(tensors={'step': global_step, 'loss': loss}, every_n_iter=10))
 
     # Horovod: pin GPU to be used to process local rank (one GPU per process)
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
-    config.gpu_options.visible_device_list = str(1)#hvd.local_rank())
+    config.gpu_options.visible_device_list = str(hvd.local_rank())
 
     # Horovod: save checkpoints only on worker 0 to prevent other workers from
     # corrupting them.
-    checkpoint_dir = '/scratch/s/sdraper/tharindu/checkpoints'# if hvd.rank() == 0 else None
+    checkpoint_dir = '/scratch/s/sdraper/tharindu/checkpoints' if hvd.rank() == 0 else None
     training_batch_generator = train_input_generator(x_train,
                                                      y_train, batch_size=100)
     # The MonitoredTrainingSession takes care of session initialization,
@@ -139,6 +154,9 @@ def main(_):
             # Run a training step synchronously.
             image_, label_ = next(training_batch_generator)
             mon_sess.run(train_op, feed_dict={image: image_, label: label_})
+            # if hvd.rank() == 0:
+                # print('test loss: %f ------------' %
+                # mon_sess.run(loss, feed_dict={image: x_test, label: y_test}))
 
 
 if __name__ == "__main__":
