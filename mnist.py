@@ -116,7 +116,7 @@ def main(_):
     opt = tf.train.RMSPropOptimizer(0.001*max(1, hvd.size()-1))
 
     # Horovod: add Horovod Distributed Optimizer.
-    opt = hvd.DistributedOptimizer(opt)
+    opt = hvd.FixedMiniBatchOptimizer(opt)
 
     global_step = tf.train.get_or_create_global_step()
     train_op = opt.minimize(loss, global_step=global_step)

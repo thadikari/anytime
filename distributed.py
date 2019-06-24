@@ -1,20 +1,18 @@
 import tensorflow as tf
 from mpi4py import MPI
+from datetime import datetime
 import sys, time
 import logging
 
 
 comm = MPI.COMM_WORLD
-mylog = lambda l_: print('----------------------RANK[%d]----:%s'%(comm.Get_rank(), l_))
+mylog = lambda l_: print('---%s-------------------RANK[%d]----:%s'%(datetime.now().strftime("%H:%M:%S"), comm.Get_rank(), l_))
 comlog = lambda l_: 0#mylog(l_)
 
 
 def init(): mylog('init')
-
 def local_rank(): return 0
-
 def rank(): return comm.Get_rank()
-
 def size(): return comm.Get_size()
 
 
@@ -46,6 +44,29 @@ class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
         session.run(self.bcast_op)
 
 
+# https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/training/optimizer.py
+# https://github.com/horovod/horovod/blob/master/horovod/tensorflow/__init__.py
+class DistributedOptimizer(tf.train.Optimizer):
+    def __init__(self, optimizer, name=None, use_locking=False):
+        self._optimizer = optimizer
+        super(DistributedOptimizer, self).__init__(name=name, use_locking=use_locking)
+
+    def compute_gradients(self, *args, **kwargs):
+        return self._optimizer.compute_gradients(*args, **kwargs)
+
+    def apply_gradients(self, *args, **kwargs):
+        return self._optimizer.apply_gradients(*args, **kwargs)
+
+    def get_slot(self, *args, **kwargs):
+        return self._optimizer.get_slot(*args, **kwargs)
+
+    def get_slot_names(self, *args, **kwargs):
+        return self._optimizer.get_slot_names(*args, **kwargs)
+
+    def variables(self, *args, **kwargs):
+        return self._optimizer.variables(*args, **kwargs)
+
+
 def master_func():
     ll = []
     is_wait = lambda: len(ll) < size()-1
@@ -71,14 +92,10 @@ def worker_func(*grads):
     return new_grads
 
 
-# https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/training/optimizer.py
-# https://github.com/horovod/horovod/blob/master/horovod/tensorflow/__init__.py
-class DistributedOptimizer(tf.train.Optimizer):
+class FixedMiniBatchOptimizer(DistributedOptimizer):
     def __init__(self, optimizer, name=None, use_locking=False):
-        if name is None: name = "Distributed{}".format(type(optimizer).__name__)
-        self._optimizer = optimizer
-        super(DistributedOptimizer, self).__init__(
-            name=name, use_locking=use_locking)
+        if name is None: name = "FixedMiniBatch{}".format(type(optimizer).__name__)
+        super(FixedMiniBatchOptimizer, self).__init__(optimizer, name=name, use_locking=use_locking)
 
     def compute_gradients(self, *args, **kwargs):
         gradients = self._optimizer.compute_gradients(*args, **kwargs)
@@ -90,19 +107,3 @@ class DistributedOptimizer(tf.train.Optimizer):
             return list(zip(new_grads, vars))
         else:
             return gradients
-
-    def apply_gradients(self, *args, **kwargs):
-        """Calls this same method on the underlying optimizer."""
-        return self._optimizer.apply_gradients(*args, **kwargs)
-
-    def get_slot(self, *args, **kwargs):
-        """Calls this same method on the underlying optimizer."""
-        return self._optimizer.get_slot(*args, **kwargs)
-
-    def get_slot_names(self, *args, **kwargs):
-        """Calls this same method on the underlying optimizer."""
-        return self._optimizer.get_slot_names(*args, **kwargs)
-
-    def variables(self, *args, **kwargs):
-        """Calls this same method on the underlying optimizer."""
-        return self._optimizer.variables(*args, **kwargs)
