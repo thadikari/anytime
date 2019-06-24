@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --time=01:30:00
+#SBATCH --time=00:30:00
 #SBATCH --account=def-sdraper
-#SBATCH --nodes=20
+#SBATCH --nodes=10
 #SBATCH --ntasks-per-node=1
 
 pwd
-cd projects/anytime
+cd ~/projects/anytime
 pwd
 source niagara/setup_env.sh
 

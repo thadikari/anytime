@@ -19,6 +19,7 @@ def size(): return comm.Get_size()
 
 
 def bcast_func(root_rank, *data):
+    comlog('broadcast from [%d]'%root_rank)
     return comm.bcast(data, root=root_rank)
 
 def broadcast(tensors, root_rank):
@@ -45,20 +46,27 @@ class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
         session.run(self.bcast_op)
 
 
-def master_func(*grads):
-    comlog('receiveing new_grads')
-    new_grads = comm.recv(source=1)
-    comlog('RECEIVED, sending update')
-    comm.send(new_grads, dest=1)
-    comlog('sent update')
-    return new_grads
+def master_func():
+    ll = []
+    is_wait = lambda: len(ll) < size()-1
+    comlog('receiving new_grads')
+    while is_wait():
+        ll.append(comm.recv())
+        comlog('received new')
+    comlog('RECEIVED ALL!')
+    avg_grads = list(sum(aa)/len(ll) for aa in zip(*ll))
+    comm.bcast(avg_grads, root=0)
+    comlog('broadcasted avg_grads')
+    return avg_grads
+
 
 def worker_func(*grads):
     # print(type(grads), len(grads))
-    comlog('sending worker')
+    comlog('sending worker grads')
     comm.send(grads, dest=0)
     comlog('sent grads, receiving update')
-    new_grads = comm.recv(source=0)
+    new_grads = comm.bcast(None, root=0)
+    # new_grads = comm.recv(source=0)
     comlog('RECEIVED update!!!!')
     return new_grads
 
@@ -75,10 +83,10 @@ class DistributedOptimizer(tf.train.Optimizer):
     def compute_gradients(self, *args, **kwargs):
         gradients = self._optimizer.compute_gradients(*args, **kwargs)
         if size() > 1:
-            func = master_func if rank() == 0 else worker_func
             grads, vars = zip(*gradients)
-            new_grads = tf.py_func(func=func, inp=grads,
-                Tout=tuple(grad.dtype for grad in grads))
+            Tout = tuple(grad.dtype for grad in grads)
+            func, inp = (master_func, []) if rank() == 0 else (worker_func, grads)
+            new_grads = tf.py_func(func=func, inp=inp, Tout=Tout)
             return list(zip(new_grads, vars))
         else:
             return gradients
