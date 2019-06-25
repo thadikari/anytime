@@ -113,10 +113,13 @@ def main(_):
     predict, loss = conv_model(image, label, tf.estimator.ModeKeys.TRAIN)
 
     # Horovod: adjust learning rate based on number of GPUs.
-    opt = tf.train.RMSPropOptimizer(0.001*max(1, hvd.size()-1))
+    # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
+    opt = tf.train.RMSPropOptimizer(0.001)#*max(1, hvd.size()-1))
+    # opt = tf.train.GradientDescentOptimizer(0.1)
 
     # Horovod: add Horovod Distributed Optimizer.
-    opt = hvd.FixedMiniBatchOptimizer(opt)
+    opt = hvd.FixedMiniBatchOptimizer(opt, every_n_batches=1)
+    # opt = hvd.AnytimeOptimizer(opt, time_limit=5)
 
     global_step = tf.train.get_or_create_global_step()
     train_op = opt.minimize(loss, global_step=global_step)

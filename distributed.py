@@ -1,23 +1,34 @@
 import tensorflow as tf
 from mpi4py import MPI
-from datetime import datetime
-import sys, time
+import numpy as np
 import logging
+import time
 
 
 comm = MPI.COMM_WORLD
-mylog = lambda l_: print('---%s-------------------RANK[%d]----:%s'%(datetime.now().strftime("%H:%M:%S"), comm.Get_rank(), l_))
-comlog = lambda l_: 0#mylog(l_)
+logger = logging.getLogger('dstr') # __name__
 
 
-def init(): mylog('init')
+def init(log_level=logging.INFO): # INFO DEBUG
+    logger.setLevel(log_level)
+    ch = logging.StreamHandler()
+    formatter = logging.Formatter(
+            '%(asctime)s---------------------|%(name)s|%(message)s', 
+            # logging.BASIC_FORMAT,
+            "%H:%M:%S")
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    logger.info('Initialized')
+
+
 def local_rank(): return 0
 def rank(): return comm.Get_rank()
 def size(): return comm.Get_size()
+def num_workers(): return size()-1
 
 
 def bcast_func(root_rank, *data):
-    comlog('broadcast from [%d]'%root_rank)
+    logger.debug('Broadcast from [%d]', root_rank)
     return comm.bcast(data, root=root_rank)
 
 def broadcast(tensors, root_rank):
@@ -44,15 +55,24 @@ class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
         session.run(self.bcast_op)
 
 
-# https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/training/optimizer.py
-# https://github.com/horovod/horovod/blob/master/horovod/tensorflow/__init__.py
-class DistributedOptimizer(tf.train.Optimizer):
-    def __init__(self, optimizer, name=None, use_locking=False):
+class MasterWorkerOptimizer(tf.train.Optimizer):
+    def __init__(self, optimizer, worker, name=None, use_locking=False):
         self._optimizer = optimizer
-        super(DistributedOptimizer, self).__init__(name=name, use_locking=use_locking)
+        self.worker = worker
+        self.wgrads = []
+        self.log = logger.getChild('MSTR' if rank() == 0 else 'WKR%d'%rank())
+        super(MasterWorkerOptimizer, self).__init__(name=name, use_locking=use_locking)
 
     def compute_gradients(self, *args, **kwargs):
-        return self._optimizer.compute_gradients(*args, **kwargs)
+        gradients = self._optimizer.compute_gradients(*args, **kwargs)
+        if size() > 1:
+            grads, vars = zip(*gradients)
+            Tout = tuple(grad.dtype for grad in grads)
+            func, inp = (self.master_func, []) if rank() == 0 else (self.worker_func, grads)
+            new_grads = tf.py_func(func=func, inp=inp, Tout=Tout)
+            return list(zip(new_grads, vars))
+        else:
+            return gradients
 
     def apply_gradients(self, *args, **kwargs):
         return self._optimizer.apply_gradients(*args, **kwargs)
@@ -66,44 +86,74 @@ class DistributedOptimizer(tf.train.Optimizer):
     def variables(self, *args, **kwargs):
         return self._optimizer.variables(*args, **kwargs)
 
+    # called only in the master node
+    def master_func(self):
+        log = self.log
+        grads, total_batches = [], 0
+        log.debug('Listening to [%d] workers', num_workers())
+        while len(grads) < num_workers():
+            summed_grads, batches = comm.recv()
+            grads.append(summed_grads)
+            total_batches += batches
+            log.debug('New grad! batches=[%d], total_batches=[%d]', batches, total_batches)
+        log.debug('All received! Averaging for total_batches=[%d]', total_batches)
+        # instead of adjusting learning rate,
+        # use [sum(aa)], not [sum(aa)/len(ll)]
+        # sum(aa)/total_batches
+        avg_grads = list(sum(aa) for aa in zip(*grads))
+        log.debug('Broadcasting avg_grads')
+        comm.bcast(avg_grads, root=0)
+        log.debug('Broadcasted avg_grads!')
+        return avg_grads
 
-def master_func():
-    ll = []
-    is_wait = lambda: len(ll) < size()-1
-    comlog('receiving new_grads')
-    while is_wait():
-        ll.append(comm.recv())
-        comlog('received new')
-    comlog('RECEIVED ALL!')
-    avg_grads = list(sum(aa)/len(ll) for aa in zip(*ll))
-    comm.bcast(avg_grads, root=0)
-    comlog('broadcasted avg_grads')
-    return avg_grads
+    # called only in the worker nodes
+    def worker_func(self, *grads):
+        log = self.log
+        self.worker.on_new_batch()
+        self.wgrads.append(list(np.copy(aa) for aa in grads))
 
-
-def worker_func(*grads):
-    # print(type(grads), len(grads))
-    comlog('sending worker grads')
-    comm.send(grads, dest=0)
-    comlog('sent grads, receiving update')
-    new_grads = comm.bcast(None, root=0)
-    # new_grads = comm.recv(source=0)
-    comlog('RECEIVED update!!!!')
-    return new_grads
-
-
-class FixedMiniBatchOptimizer(DistributedOptimizer):
-    def __init__(self, optimizer, name=None, use_locking=False):
-        if name is None: name = "FixedMiniBatch{}".format(type(optimizer).__name__)
-        super(FixedMiniBatchOptimizer, self).__init__(optimizer, name=name, use_locking=use_locking)
-
-    def compute_gradients(self, *args, **kwargs):
-        gradients = self._optimizer.compute_gradients(*args, **kwargs)
-        if size() > 1:
-            grads, vars = zip(*gradients)
-            Tout = tuple(grad.dtype for grad in grads)
-            func, inp = (master_func, []) if rank() == 0 else (worker_func, grads)
-            new_grads = tf.py_func(func=func, inp=inp, Tout=Tout)
-            return list(zip(new_grads, vars))
+        if self.worker.is_dispatch_now():
+            summed_grads = list(sum(aa) for aa in zip(*self.wgrads))
+            batches = len(self.wgrads)
+            log.debug('Sending summed_grads for [%d] batches', batches)
+            comm.send((summed_grads, batches), dest=0)
+            
+            log.debug('Listening for avg_grads')
+            avg_grads = comm.bcast(None, root=0)
+            log.debug('Received avg_grads!')
+            self.wgrads = []
+            self.worker.on_dispatch_done()
+            return avg_grads
         else:
-            return gradients
+            # do not take a gradient step with this iteration
+            # hack is to apply zero gradient
+            return list(np.zeros_like(aa) for aa in grads)
+
+
+class FMBWorker:
+    def __init__(self, every_n_batches):
+        self.every_n_batches, self.batches_count = every_n_batches, 0
+    def on_new_batch(self): self.batches_count += 1
+    def is_dispatch_now(self): return self.batches_count >= self.every_n_batches
+    def on_dispatch_done(self): self.batches_count = 0
+
+
+class FixedMiniBatchOptimizer(MasterWorkerOptimizer):
+    def __init__(self, optimizer, every_n_batches, name=None, use_locking=False):
+        if name is None: name = "FixedMiniBatch{}".format(type(optimizer).__name__)
+        super(FixedMiniBatchOptimizer, self).__init__(optimizer, FMBWorker(every_n_batches), name=name, use_locking=use_locking)
+
+
+class AnytimeWorker:
+    def __init__(self, time_limit):
+        self.limit, self.start = time_limit, None
+        self.on_dispatch_done()
+    def on_new_batch(self): pass
+    def is_dispatch_now(self): return (time.time() - self.start) >= self.limit
+    def on_dispatch_done(self): self.start = time.time()
+
+
+class AnytimeOptimizer(MasterWorkerOptimizer):
+    def __init__(self, optimizer, time_limit, name=None, use_locking=False):
+        if name is None: name = "Anytime{}".format(type(optimizer).__name__)
+        super().__init__(optimizer, AnytimeWorker(time_limit), name=name, use_locking=use_locking)
