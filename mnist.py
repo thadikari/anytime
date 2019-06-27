@@ -15,6 +15,8 @@
 # ==============================================================================
 
 import os
+import utils
+import time
 import errno
 import tensorflow as tf
 import distributed as hvd
@@ -31,7 +33,7 @@ def conv_model(feature, target, mode):
     """2-layer convolution model."""
     # Convert the target to a one-hot tensor of shape (batch_size, 10) and
     # with a on-value of 1 for each one-hot vector of length 10.
-    target = tf.one_hot(tf.cast(target, tf.int32), 10, 1, 0)
+    target_1h = tf.one_hot(tf.cast(target, tf.int32), 10, 1, 0)
 
     # Reshape feature to 4d tensor with 2nd and 3rd dimensions being
     # image width and height final dimension being the number of color channels.
@@ -60,9 +62,13 @@ def conv_model(feature, target, mode):
 
     # Compute logits (1 per class) and compute loss.
     logits = layers.dense(h_fc1, 10, activation=None)
-    loss = tf.losses.softmax_cross_entropy(target, logits)
+    loss = tf.losses.softmax_cross_entropy(target_1h, logits)
+    predict = tf.argmax(logits, 1)
+    is_correct = tf.equal(tf.cast(target, 'int64'), tf.argmax(logits, 1))
+    accuracy = tf.reduce_mean(tf.cast(is_correct, 'float'))
+    # error = 100*(1 - tf.reduce_mean(tf.cast(self.is_correct, 'float')))
 
-    return tf.argmax(logits, 1), loss
+    return accuracy, loss
 
 
 def train_input_generator(x_train, y_train, batch_size=64):
@@ -78,8 +84,20 @@ def train_input_generator(x_train, y_train, batch_size=64):
 
 
 def main(_):
+    SCRATCH = '/scratch/s/sdraper/tharindu/checkpoints'
+    log_freq = 10
+    learning_rate = 0.001
+    batch_size = 100
+    straggler_stddev_ms = 50
+    fmb_every_n_batches = 1
+    any_time_limit = .5
+    
+    run_id = 'run_%g_%d_%g_%d_%g'%(learning_rate, batch_size, straggler_stddev_ms, fmb_every_n_batches, any_time_limit)
+    print('run_id: %s'%run_id)
+    work_dir = os.path.join(SCRATCH, run_id)
+    
     # Horovod: initialize Horovod.
-    hvd.init()
+    hvd.init(work_dir)
 
     # Keras automatically creates a cache directory in ~/.keras/datasets for
     # storing the downloaded MNIST data. This creates a race
@@ -98,7 +116,7 @@ def main(_):
 
     # Download and load MNIST dataset.
     (x_train, y_train), (x_test, y_test) = \
-        keras.datasets.mnist.load_data('MNIST-data-%d' % 0)#hvd.rank())
+        keras.datasets.mnist.load_data('MNIST-data')#hvd.rank())
 
     # The shape of downloaded data is (-1, 28, 28), hence we need to reshape it
     # into (-1, 784) to feed into our network. Also, need to normalize the
@@ -110,16 +128,16 @@ def main(_):
     with tf.name_scope('input'):
         image = tf.placeholder(tf.float32, [None, 784], name='image')
         label = tf.placeholder(tf.float32, [None], name='label')
-    predict, loss = conv_model(image, label, tf.estimator.ModeKeys.TRAIN)
+    accuracy, loss = conv_model(image, label, tf.estimator.ModeKeys.TRAIN)
 
     # Horovod: adjust learning rate based on number of GPUs.
     # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
-    opt = tf.train.RMSPropOptimizer(0.001)#*max(1, hvd.size()-1))
-    # opt = tf.train.GradientDescentOptimizer(0.1)
+    opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
+    # opt = tf.train.GradientDescentOptimizer(learning_rate)
 
     # Horovod: add Horovod Distributed Optimizer.
-    opt = hvd.FixedMiniBatchOptimizer(opt, every_n_batches=1)
-    # opt = hvd.AnytimeOptimizer(opt, time_limit=5)
+    opt = hvd.FixedMiniBatchOptimizer(opt, every_n_batches=fmb_every_n_batches, straggler_stddev_ms=straggler_stddev_ms)
+    # opt = hvd.AnytimeOptimizer(opt, time_limit=time_limit, straggler_stddev_ms=straggler_stddev_ms)
 
     global_step = tf.train.get_or_create_global_step()
     train_op = opt.minimize(loss, global_step=global_step)
@@ -132,10 +150,10 @@ def main(_):
         hvd.BroadcastGlobalVariablesHook(0),
 
         # Horovod: adjust number of steps based on number of GPUs.
-        tf.train.StopAtStepHook(last_step=20000 // hvd.size()),
+        tf.train.StopAtStepHook(last_step=20000),# // hvd.size()),
     ]
 
-    if hvd.rank()==0: hooks.append(tf.train.LoggingTensorHook(tensors={'step': global_step, 'loss': loss}, every_n_iter=10))
+    if hvd.rank()==0: hooks.append(tf.train.LoggingTensorHook(tensors={'step': global_step, 'loss': loss}, every_n_iter=log_freq))
 
     # Horovod: pin GPU to be used to process local rank (one GPU per process)
     config = tf.ConfigProto()
@@ -144,23 +162,27 @@ def main(_):
 
     # Horovod: save checkpoints only on worker 0 to prevent other workers from
     # corrupting them.
-    checkpoint_dir = '/scratch/s/sdraper/tharindu/checkpoints' if hvd.rank() == 0 else None
+    checkpoint_dir = work_dir if hvd.rank() == 0 else None
     training_batch_generator = train_input_generator(x_train,
-                                                     y_train, batch_size=100)
+                                                     y_train, batch_size=batch_size)
     # The MonitoredTrainingSession takes care of session initialization,
     # restoring from a checkpoint, saving to a checkpoint, and closing when done
     # or an error occurs.
+    
+    stats = utils.CSVFile('stats.csv', work_dir, ['time', 'step', 'train_loss', 'test_accuracy'])
+    start_time, step_ = time.time(), 0
     with tf.train.MonitoredTrainingSession(checkpoint_dir=checkpoint_dir,
                                            hooks=hooks,
                                            config=config) as mon_sess:
         while not mon_sess.should_stop():
             # Run a training step synchronously.
             image_, label_ = next(training_batch_generator)
-            mon_sess.run(train_op, feed_dict={image: image_, label: label_})
-            # if hvd.rank() == 0:
-                # print('test loss: %f ------------' %
-                # mon_sess.run(loss, feed_dict={image: x_test, label: y_test}))
+            _, loss_ = mon_sess.run([train_op, loss], feed_dict={image: image_, label: label_})
+            if hvd.rank() == 0 and step_%log_freq==0:
+                acc = mon_sess.run(accuracy, feed_dict={image: x_test, label: y_test})
+                stats.writerow([time.time()-start_time, step_, loss_, acc], True)
+            step_ += 1
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     tf.app.run()
