@@ -4,16 +4,21 @@ import numpy as np
 import logging
 import time
 
+import utils
+
 
 comm = MPI.COMM_WORLD
 logger = logging.getLogger('dstr') # __name__
+WORK_DIR = None
 
+def init(work_dir=None, log_level=logging.INFO): # INFO DEBUG
+    global WORK_DIR
+    WORK_DIR = work_dir
 
-def init(log_level=logging.INFO): # INFO DEBUG
     logger.setLevel(log_level)
     ch = logging.StreamHandler()
     formatter = logging.Formatter(
-            '%(asctime)s---------------------|%(name)s|%(message)s', 
+            '%(asctime)s---------------------|%(name)s|%(message)s',
             # logging.BASIC_FORMAT,
             "%H:%M:%S")
     ch.setFormatter(formatter)
@@ -57,10 +62,14 @@ class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
 
 class MasterWorkerOptimizer(tf.train.Optimizer):
     def __init__(self, optimizer, worker, name=None, use_locking=False):
+
         self._optimizer = optimizer
         self.worker = worker
-        self.wgrads = []
-        self.log = logger.getChild('MSTR' if rank() == 0 else 'WKR%d'%rank())
+        self.wgrads, self.num_batches = None, 0
+
+        self.log = logger.getChild('MST' if rank() == 0 else 'wk%d'%rank())
+        self.prof = utils.LoopProfiler(self.log.getChild('LP'), 10000)
+        self.work = utils.WorkerProfiler(WORK_DIR, self.log.getChild('WP'), 5)
         super(MasterWorkerOptimizer, self).__init__(name=name, use_locking=use_locking)
 
     def compute_gradients(self, *args, **kwargs):
@@ -91,43 +100,52 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
         log = self.log
         grads, total_batches = [], 0
         log.debug('Listening to [%d] workers', num_workers())
-        while len(grads) < num_workers():
-            summed_grads, batches = comm.recv()
-            grads.append(summed_grads)
-            total_batches += batches
-            log.debug('New grad! batches=[%d], total_batches=[%d]', batches, total_batches)
-        log.debug('All received! Averaging for total_batches=[%d]', total_batches)
-        # instead of adjusting learning rate,
-        # use [sum(aa)], not [sum(aa)/len(ll)]
-        # sum(aa)/total_batches
-        avg_grads = list(sum(aa) for aa in zip(*grads))
-        log.debug('Broadcasting avg_grads')
-        comm.bcast(avg_grads, root=0)
-        log.debug('Broadcasted avg_grads!')
-        return avg_grads
+
+        with self.prof as pp, self.work as ww:
+            with pp.tag('listen'):
+                while len(grads) < num_workers():
+                    rank, summed_grads, batches = comm.recv()
+                    grads.append(summed_grads)
+                    total_batches += batches
+                    ww.on_result(rank)
+                    log.debug('New grad! batches=[%d], total_batches=[%d]', batches, total_batches)
+
+            with pp.tag('average'):
+                # log.debug('All received! Averaging for total_batches=[%d]', total_batches)
+                # instead of adjusting learning rate,
+                # use [sum(aa)], not [sum(aa)/len(ll)]
+                # sum(aa)/total_batches
+                avg_grads = list(sum(aa) for aa in zip(*grads))
+
+            with pp.tag('broadcast'):
+                return comm.bcast(avg_grads, root=0)
 
     # called only in the worker nodes
     def worker_func(self, *grads):
         log = self.log
         self.worker.on_new_batch()
-        self.wgrads.append(list(np.copy(aa) for aa in grads))
+        self.num_batches += 1
+
+        if self.wgrads is None:
+            # first time this function is called
+            self.wgrads = list(np.copy(aa) for aa in grads)
+        else:
+            self.wgrads = list(np.add(aa,bb,out=aa) for aa,bb in zip(self.wgrads, grads))
 
         if self.worker.is_dispatch_now():
-            summed_grads = list(sum(aa) for aa in zip(*self.wgrads))
-            batches = len(self.wgrads)
-            log.debug('Sending summed_grads for [%d] batches', batches)
-            comm.send((summed_grads, batches), dest=0)
-            
+            log.debug('Sending summed_grads for [%d] batches', self.num_batches)
+            comm.send((rank(), self.wgrads, self.num_batches), dest=0)
+
             log.debug('Listening for avg_grads')
             avg_grads = comm.bcast(None, root=0)
             log.debug('Received avg_grads!')
-            self.wgrads = []
+            self.wgrads = list(np.multiply(aa,0.,out=aa) for aa in self.wgrads)
             self.worker.on_dispatch_done()
             return avg_grads
         else:
             # do not take a gradient step with this iteration
             # hack is to apply zero gradient
-            return list(np.zeros_like(aa) for aa in grads)
+            return list(np.multiply(aa,0.,out=aa) for aa in grads)
 
 
 class FMBWorker:
@@ -141,7 +159,8 @@ class FMBWorker:
 class FixedMiniBatchOptimizer(MasterWorkerOptimizer):
     def __init__(self, optimizer, every_n_batches, name=None, use_locking=False):
         if name is None: name = "FixedMiniBatch{}".format(type(optimizer).__name__)
-        super(FixedMiniBatchOptimizer, self).__init__(optimizer, FMBWorker(every_n_batches), name=name, use_locking=use_locking)
+        super(FixedMiniBatchOptimizer, self).__init__(optimizer,
+            FMBWorker(every_n_batches), name=name, use_locking=use_locking)
 
 
 class AnytimeWorker:
@@ -156,4 +175,5 @@ class AnytimeWorker:
 class AnytimeOptimizer(MasterWorkerOptimizer):
     def __init__(self, optimizer, time_limit, name=None, use_locking=False):
         if name is None: name = "Anytime{}".format(type(optimizer).__name__)
-        super().__init__(optimizer, AnytimeWorker(time_limit), name=name, use_locking=use_locking)
+        super(AnytimeOptimizer, self).__init__(optimizer,
+            AnytimeWorker(time_limit), name=name, use_locking=use_locking)
