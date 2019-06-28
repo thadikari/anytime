@@ -56,9 +56,8 @@ def conv_model(feature, target, mode):
         h_pool2_flat = tf.reshape(h_pool2, [-1, 7 * 7 * 64])
 
     # Densely connected layer with 1024 neurons.
-    h_fc1 = layers.dropout(
-        layers.dense(h_pool2_flat, 1024, activation=tf.nn.relu),
-        rate=0.5, training=mode == tf.estimator.ModeKeys.TRAIN)
+    h_fc1 = layers.dense(h_pool2_flat, 1024, activation=tf.nn.relu)#layers.dropout(#,
+        #rate=0.5, training=mode == tf.estimator.ModeKeys.TRAIN)
 
     # Compute logits (1 per class) and compute loss.
     logits = layers.dense(h_fc1, 10, activation=None)
@@ -85,15 +84,18 @@ def train_input_generator(x_train, y_train, batch_size=64):
 
 def main(_):
     SCRATCH = '/scratch/s/sdraper/tharindu/checkpoints'
+    
+    dist_opt = 'fmb' # any fmb
+    intr_opt = 'rms' # sgd rms
     log_freq = 10
     learning_rate = 0.001
     batch_size = 100
-    straggler_stddev_ms = 50
+    straggler_stddev_ms = 0
     fmb_every_n_batches = 1
-    any_time_limit = .5
+    any_time_limit = .1111
     
-    run_id = 'run_%g_%d_%g_%d_%g'%(learning_rate, batch_size, straggler_stddev_ms, fmb_every_n_batches, any_time_limit)
-    print('run_id: %s'%run_id)
+    run_id = '%s_%s_%g_%d_%g_%d_%g'%(dist_opt, intr_opt, learning_rate, batch_size, straggler_stddev_ms, fmb_every_n_batches, any_time_limit)
+    # print('run_id: %s'%run_id)
     work_dir = os.path.join(SCRATCH, run_id)
     
     # Horovod: initialize Horovod.
@@ -132,12 +134,18 @@ def main(_):
 
     # Horovod: adjust learning rate based on number of GPUs.
     # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
-    opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
-    # opt = tf.train.GradientDescentOptimizer(learning_rate)
+    if intr_opt == 'rms':
+        opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
+    elif intr_opt == 'sgd':
+        opt = tf.train.GradientDescentOptimizer(learning_rate)
+    else: raise Exception('intr_opt error')
 
     # Horovod: add Horovod Distributed Optimizer.
-    opt = hvd.FixedMiniBatchOptimizer(opt, every_n_batches=fmb_every_n_batches, straggler_stddev_ms=straggler_stddev_ms)
-    # opt = hvd.AnytimeOptimizer(opt, time_limit=time_limit, straggler_stddev_ms=straggler_stddev_ms)
+    if dist_opt == 'fmb':
+        opt = hvd.FixedMiniBatchOptimizer(opt, every_n_batches=fmb_every_n_batches, straggler_stddev_ms=straggler_stddev_ms)
+    elif dist_opt == 'any':
+        opt = hvd.AnytimeOptimizer(opt, time_limit=time_limit, straggler_stddev_ms=straggler_stddev_ms)
+    else: raise Exception('dist_opt error')
 
     global_step = tf.train.get_or_create_global_step()
     train_op = opt.minimize(loss, global_step=global_step)
@@ -169,20 +177,21 @@ def main(_):
     # restoring from a checkpoint, saving to a checkpoint, and closing when done
     # or an error occurs.
     
-    stats = utils.CSVFile('stats.csv', work_dir, ['time', 'step', 'train_loss', 'test_accuracy'])
-    start_time, step_ = time.time(), 0
+    stats = utils.CSVFile('stats.csv', work_dir, ['time (sec)', 'step', 'train_loss', 'test_accuracy'])
+    start_time, step_, loss_ = time.time(), 0, 0
     with tf.train.MonitoredTrainingSession(checkpoint_dir=checkpoint_dir,
                                            hooks=hooks,
                                            config=config) as mon_sess:
         while not mon_sess.should_stop():
-            # Run a training step synchronously.
-            image_, label_ = next(training_batch_generator)
-            _, loss_ = mon_sess.run([train_op, loss], feed_dict={image: image_, label: label_})
             if hvd.rank() == 0 and step_%log_freq==0:
                 acc = mon_sess.run(accuracy, feed_dict={image: x_test, label: y_test})
                 stats.writerow([time.time()-start_time, step_, loss_, acc], True)
             step_ += 1
 
+            # Run a training step synchronously.
+            image_, label_ = next(training_batch_generator)
+            mon_sess.run(train_op, feed_dict={image: image_, label: label_})
+            # _, loss_ = mon_sess.run([train_op, loss], feed_dict={image: image_, label: label_})
 
 if __name__ == '__main__':
     tf.app.run()
