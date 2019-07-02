@@ -77,7 +77,6 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
 
         self._optimizer = optimizer
         self.worker = worker
-        self.wgrads, self.num_batches = None, 0
         self.std_dev = straggler_stddev_ms
 
         self.log = logger.getChild('MST' if rank()==0 else 'wk%d'%rank())
@@ -90,12 +89,18 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
         if size() > 1:
             grads, vars = zip(*gradients)
             # TODO: test --> grads shouldn't be evaluated in master!!!
-            shapes = tuple(grad.shape for grad in grads)
-            Tout = tuple(grad.dtype for grad in grads)
+            shapes, Tout = zip(*[(grad.shape, grad.dtype) for grad in grads])
             self.wgrads = list(np.zeros(ss, dtype=tt.as_numpy_dtype) for ss,tt in zip(shapes,Tout))
+            self.num_batches = tf.get_variable('worker_num_batches', shape=(), initializer=tf.zeros_initializer(), trainable=False)
+            self.grad_accs = list(self._optimizer._zeros_slot(grad, 'accumulator', 'accumulator_op') for grad in grads)
+            # self.grad_accs created in master only to create identical setup (global vars) to master.
 
-            func, inp = (self.master_func, []) if rank()==0 else (self.worker_func, grads)
-            new_grads = tf.py_func(func=func, inp=inp, Tout=Tout)
+            if rank()==0:
+                new_grads = tf.py_func(func=self.master_func, inp=[], Tout=Tout)
+            else:
+                with tf.control_dependencies([tf.assign_add(self.num_batches, 1)]):
+                    new_grads = [tf.assign_add(acc, grad) for grad, acc in zip(grads, self.grad_accs)]
+
             return list(zip(new_grads, vars))
         else:
             return gradients
@@ -111,9 +116,11 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
                     return broadcast_assign_vars(vars, 0, func=self.master_bcast_func)
             else:
                 def f_true():
-                    disp_op = tf.py_func(func=self.worker_dispatch_func, inp=[], Tout=[])
+                    disp_op = tf.py_func(func=self.worker_dispatch_func, inp=[self.num_batches]+self.grad_accs, Tout=[])
                     with tf.control_dependencies([disp_op]):
-                        return broadcast_assign_vars(vars, 0)
+                        reset_ops = [tf.assign(self.num_batches, 0.)]+[tf.assign(acc, acc*0.) for acc in self.grad_accs]
+                        with tf.control_dependencies(reset_ops):
+                            return broadcast_assign_vars(vars, 0)
 
                 with tf.control_dependencies(grads):
                     is_dispatch_now = tf.py_func(func=self.worker.is_dispatch_now, inp=[], Tout=tf.bool)
@@ -172,22 +179,14 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
             self.wgrads[i] = np.multiply(arr,0., out=arr)
 
     # called only in the worker nodes
-    def worker_func(self, *grads):
+    # def worker_func(self, *grads):
         # # tt = abs(np.random.normal(0., self.std_dev))/1000.
         # # log.debug('Inducing straggler sleeping for [%g] ms.', tt)
         # # time.sleep(tt) # induced straggler sleeping time
-        self.log.debug('Computed new_batch, num_batches [%d]', self.num_batches)
-        self.worker.on_new_batch()
-        self.add_grads(grads)
-        self.num_batches += 1
-        # TODO: REMOVE THIS RETURN!!!!
-        return grads
 
-    def worker_dispatch_func(self):
-        self.log.debug('Sending summed_grads for [%d] batches', self.num_batches)
-        comm.send((rank(), self.wgrads, self.num_batches, self.worker.elapsed()), dest=0)
-        self.num_batches = 0
-        self.reset_grads()
+    def worker_dispatch_func(self, num_batches, *summed_grads):
+        self.log.debug('Sending summed_grads for [%d] batches', num_batches)
+        comm.send((rank(), summed_grads, num_batches, self.worker.elapsed()), dest=0)
         self.worker.on_dispatch_done()
 
 
@@ -200,8 +199,9 @@ class FMBWorker(WorkerTimer):
     def __init__(self, every_n_batches):
         self.every_n_batches, self.batches_count = every_n_batches, 0
         super().__init__()
-    def on_new_batch(self): self.batches_count += 1
-    def is_dispatch_now(self): return self.batches_count >= self.every_n_batches
+    def is_dispatch_now(self):
+        self.batches_count += 1
+        return self.batches_count >= self.every_n_batches
     def on_dispatch_done(self):
         self.batches_count = 0
         self.reset()
@@ -213,18 +213,18 @@ class FixedMiniBatchOptimizer(MasterWorkerOptimizer):
             FMBWorker(every_n_batches), straggler_stddev_ms, name=name, use_locking=use_locking)
 
 class AnytimeWorker(WorkerTimer):
-    def __init__(self, time_limit):
-        self.limit, self.start = time_limit, None
+    def __init__(self, time_limit_sec):
+        self.limit, self.start = time_limit_sec, None
         self.start = time.time()
         super().__init__()
-    def on_new_batch(self): pass
-    def is_dispatch_now(self): return (time.time() - self.start) >= self.limit
+    def is_dispatch_now(self):
+        return (time.time() - self.start) >= self.limit
     def on_dispatch_done(self):
         self.start = time.time()
         self.reset()
 
 class AnytimeOptimizer(MasterWorkerOptimizer):
-    def __init__(self, optimizer, time_limit, straggler_stddev_ms, name=None, use_locking=False):
+    def __init__(self, optimizer, time_limit_sec, straggler_stddev_ms, name=None, use_locking=False):
         if name is None: name = "Anytime{}".format(type(optimizer).__name__)
         super(AnytimeOptimizer, self).__init__(optimizer,
-            AnytimeWorker(time_limit), straggler_stddev_ms, name=name, use_locking=use_locking)
+            AnytimeWorker(time_limit_sec), straggler_stddev_ms, name=name, use_locking=use_locking)
