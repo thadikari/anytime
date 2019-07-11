@@ -28,7 +28,7 @@ class WorkerProfiler:
         self.dump_freq = dump_freq
         self.csv = None if (work_dir is None) else \
                    CSVFile('worker_stats.csv', work_dir, \
-                   ['rank', 'elapsed_master (ms)', 'elapsed_worker (ms)', 'difference (ms)'])
+                   ['rank', 'compute_time_master', 'compute_time_worker', 'difference'])
         self.reset()
 
     def reset(self):
@@ -40,9 +40,10 @@ class WorkerProfiler:
         self.step_count += 1
         return self
 
-    def on_result(self, rank, elapsed_worker):
-        elapsed_master = (time.time() - self.started)*1000
-        self.cache.append([rank, elapsed_master, elapsed_worker, elapsed_master-elapsed_worker])
+    def on_result(self, rank, compute_time_worker):
+        compute_time_master = time.time() - self.started
+        self.cache.append([rank, compute_time_master, compute_time_worker, 
+                           compute_time_master-compute_time_worker])
 
     def __exit__(self, type, value, traceback):
         if self.step_count%self.dump_freq==0 and self.csv is not None:
@@ -90,3 +91,21 @@ class LoopProfiler:
             summ = ', '.join(["'%s':%d"%(key, int(val)) for key, val in self.tags.items()])
             self.log.info('Summary at[%d] for[%d]: ['%(self.step_count, self.dump_freq) + summ + ']')
             for key in self.tags: self.tags[key] = 0
+
+
+class WorkerTag:
+    def __init__(self):
+        self.tags = collections.OrderedDict()
+        self.started = time.time()
+        self.curr = ''
+
+    def tag(self, name):
+        now = time.time()
+        elapsed = now-self.started
+        self.tags[self.curr] = elapsed
+        self.started = now
+        self.curr = name
+        return elapsed
+
+    def get(self, name):
+        return self.tags.get(name, -1)

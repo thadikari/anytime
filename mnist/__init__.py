@@ -62,16 +62,20 @@ def get_mnist():
             else:
                 raise
 
-    (x_train_, y_train), *rest = keras.datasets.mnist.load_data('MNIST-data')
+    (x_train_, y_train), (x_test_, y_test) = keras.datasets.mnist.load_data('MNIST-data')
     x_train = np.reshape(x_train_, (-1, 784)) / 255.0
+    x_test = np.reshape(x_test_, (-1, 784)) / 255.0
     assert len(x_train) == len(y_train)
-    return (x_train, y_train)
+    assert len(x_test) == len(y_test)
+    return (x_train, y_train), (x_test, y_test)
 
-def input_generator(batch_size):
-    x_train, y_train = get_mnist()
+def permute(x_, y_):
+    p = np.random.permutation(len(x_))
+    return x_[p], y_[p]
+
+def input_generator(x_train, y_train, batch_size):
     while True:
-        p = np.random.permutation(len(x_train))
-        x_train, y_train = x_train[p], y_train[p]
+        x_train, y_train = permute(x_train, y_train)
         index = 0
         while index <= len(x_train) - batch_size:
             yield x_train[index:index + batch_size], \
@@ -79,10 +83,13 @@ def input_generator(batch_size):
             index += batch_size
 
 
-def get_everything(batch_size, data_dir):
+def get_everything(batch_size, test_size=100):
     image, label = tf.placeholder(tf.float32, [None, 784], name='image'), tf.placeholder(tf.float32, [None], name='label')
     accuracy, loss = conv_model(image, label)
-    generator = input_generator(batch_size)
+    (x_train, y_train), (x_test, y_test) = get_mnist()
+    generator = input_generator(x_train, y_train, batch_size)
+    x_test, y_test = permute(x_test, y_test)
+    x_test, y_test = x_test[:test_size], y_test[:test_size]
     def get_train_fd():
         return dict(zip([image, label], next(generator)))
-    return loss, get_train_fd
+    return loss, accuracy, get_train_fd, lambda: {image:x_test, label:y_test}
