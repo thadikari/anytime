@@ -13,11 +13,11 @@ logger = None
 MPI_RANK = None
 MPI_SIZE = None
 WORK_DIR = None
-STRAGGLER_STD_DEV_MS = None
+INDUCE_STRAGGLERS = None
 
-def init(work_dir=None, straggler_std_dev_ms=0, log_level=logging.INFO): # INFO DEBUG
+def init(work_dir=None, induce_stragglers=0, log_level=logging.INFO): # INFO DEBUG
 
-    global comm, logger, MPI_RANK, MPI_SIZE, WORK_DIR, STRAGGLER_STD_DEV_MS
+    global comm, logger, MPI_RANK, MPI_SIZE, WORK_DIR, INDUCE_STRAGGLERS
 
     logger = logging.getLogger('dstr') # __name__
     if logger.hasHandlers(): logger.propagate = 0
@@ -38,7 +38,7 @@ def init(work_dir=None, straggler_std_dev_ms=0, log_level=logging.INFO): # INFO 
 
     MPI_RANK = comm.Get_rank()
     MPI_SIZE = comm.Get_size()
-    STRAGGLER_STD_DEV_MS = straggler_std_dev_ms
+    INDUCE_STRAGGLERS = induce_stragglers
 
     WORK_DIR = work_dir
     if WORK_DIR is not None \
@@ -68,6 +68,7 @@ def broadcast_assign_vars(vars, root_rank, func=default_bcast_func):
     return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
 
 
+callable_after_create_session = None
 class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
     def __init__(self, root_rank, device=''):
         super(BroadcastGlobalVariablesHook, self).__init__()
@@ -82,6 +83,9 @@ class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
 
     def after_create_session(self, session, coord):
         session.run(self.bcast_op)
+        global callable_after_create_session
+        if callable_after_create_session is not None:
+            callable_after_create_session()
 
 
 from tensorflow.python.training import session_run_hook
@@ -89,14 +93,15 @@ from tensorflow.python.training.session_run_hook import SessionRunArgs
 from tensorflow.python.training.basic_session_run_hooks import _as_graph_element
 
 class CSVLoggingHook(session_run_hook.SessionRunHook):
-    def __init__(self, train_tensors, test_tensors, get_test_fd, every_n_iter, flush_every_n_iter=10):
+    def __init__(self, every_n_iter, train_tensors, test_tensors={}, get_test_fd=None, flush_every_n_iter=10):
         self._train_dict = train_tensors
         self._test_dict = test_tensors
         self._get_test_fd = get_test_fd
         self._every_n_iter = every_n_iter
         self._flush_every_n_iter = flush_every_n_iter
         self._tag_order = list(self._train_dict.keys()) + list(self._test_dict.keys())
-        self._csv = utils.CSVFile('stats.csv', WORK_DIR, ['time'] + self._tag_order)
+        self._csv = None if WORK_DIR is None else \
+                    utils.CSVFile('stats.csv', WORK_DIR, ['time'] + self._tag_order)
 
     def begin(self):
         self._iter_count = 0
@@ -121,7 +126,7 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
 
             train_vals = run_values.results
             stats = list(map(str, [train_vals[key] for key in self._train_dict.keys()] + test_vals))
-            self._csv.writerow([time.time()-self._start_time] + stats, False)
+            if self._csv is not None: self._csv.writerow([time.time()-self._start_time] + stats, False)
 
             line = ', '.join(map(lambda a_,b_: '%s = %s'%(a_,b_), self._tag_order, stats))
             if self._last_time is None: #tf.get_logger()
@@ -131,20 +136,20 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
 
             self._last_time = time.time()
 
-        if self._iter_count%self._flush_every_n_iter==0:
+        if self._csv is not None and self._iter_count%self._flush_every_n_iter==0:
             self._csv.flush()
 
         self._iter_count += 1
 
 
 class MasterWorkerOptimizer(tf.train.Optimizer):
-    def __init__(self, optimizer, worker, name=None, use_locking=False):
+    def __init__(self, optimizer, worker_fac, name=None, use_locking=False):
         self._optimizer = optimizer
-        self.worker = worker
+        if rank()!=0: self.worker = worker_fac()
 
         self.log = logger.getChild('MST')
         self.prof = utils.LoopProfiler(self.log.getChild('LP'), 10000)
-        self.work = utils.WorkerProfiler(5, WORK_DIR, self.log.getChild('WP'))
+        self.work = utils.WorkerProfiler(5, ['rank', 'num_batches', 'compute_time_worker'], WORK_DIR)
         super(MasterWorkerOptimizer, self).__init__(name=name, use_locking=use_locking)
 
     def compute_gradients(self, *args, **kwargs):
@@ -219,7 +224,7 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
                     # Try isend ie without wait
                     rank, summed_grads, num_batches, compute_time_worker = comm.recv()
                     self.add_grads(summed_grads)
-                    ww.on_result(rank, compute_time_worker)
+                    ww.on_result([rank, num_batches, compute_time_worker])
                     total_batches += num_batches
                     recv_workers += 1
                     log.debug('New grad! num_batches=[%d], total_batches=[%d]', num_batches, total_batches)
@@ -243,27 +248,37 @@ class MasterWorkerOptimizer(tf.train.Optimizer):
 
 
 class GenericWorker:
-    def __init__(self, max_sleep_time_ms=1e9):
-        self.last_idled_duration, self.sleep_time = 0, 0
-        self.max_sleep_time_ms = max_sleep_time_ms
+    def __init__(self, max_sleep_time=1e9):
+        self.sleep_time = 0.
         self.prof = utils.WorkerTag()
-        self.log = logger.getChild('MST' if rank()==0 else 'wk%d'%rank())
+        self.log = logger.getChild('wk%d'%rank())
         self.reset()
+
+        global callable_after_create_session
+        callable_after_create_session = self.on_new_round
+
+        # modes = [[0, 0], [0, .2], [2, .1], [4, .2]]
+        # weights = [.4, .3, .2, .1]
+        modes = [[0, .1], [1.5, .4], [4, .5]]
+        weights = [.5, .4, .1]
+        lim = min(max_sleep_time, max([it[0]+it[1]*5 for it in modes]))
+        if INDUCE_STRAGGLERS:
+            self.log.info('[INDUCED STRAGGLERS] modes:%s, weights:%s', modes, weights)
+        def gen_sleep_():
+            ind = np.random.choice(len(weights), p=weights)
+            return min(lim, abs(np.random.normal(*modes[ind])))
+        self.gen_sleep = gen_sleep_
 
     def reset(self): self.computing_started = time.time()
     def elapsed(self): return time.time() - self.computing_started
     def on_new_round(self):
-        self.prof.tag('compute')
         self.reset()
+        self.prof.tag('compute')
         self.induce_straggler()
 
     def induce_straggler(self):
-        if STRAGGLER_STD_DEV_MS>0:
-                # tt = abs(np.random.normal(0., STRAGGLER_STD_DEV_MS))
-            modes = [[0, 0.], [0, 200], [2000, 100], [5000, 100]]
-            weights = [.4, .3, .2, .1]
-            ind = np.random.choice(len(weights), p=weights)
-            self.sleep_time = min(self.max_sleep_time_ms, abs(np.random.normal(*modes[ind])))/1000.
+        if INDUCE_STRAGGLERS:
+            self.sleep_time = self.gen_sleep()
             logger.debug('Inducing straggler sleeping for [%g]s.', self.sleep_time)
             time.sleep(self.sleep_time) # induced straggler sleeping time in secs
 
@@ -271,11 +286,14 @@ class GenericWorker:
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
         compute_time = self.prof.tag('send')
-        self.log.info('Sending! Slept [%g]ms, sending [%d] batches, compute_time [%g], last_idle [%g], last_send [%g]', self.sleep_time, num_batches, compute_time, self.prof.get('idle'), last_send)
+        self.log.info('Sending! Slept [%g], sending [%d] batches, compute_time [%g], last_idle [%g], last_send [%g]', self.sleep_time, num_batches, compute_time, self.prof.get('idle'), last_send)
         comm.send((rank(), summed_grads, num_batches, compute_time), dest=0)
         self.on_dispatch_done()
         self.prof.tag('idle')
 
+def worker_factory(tt, *args):
+    def create(): return tt(*args)
+    return create
 
 class FMBWorker(GenericWorker):
     def __init__(self, every_n_batches):
@@ -291,7 +309,7 @@ class FixedMiniBatchOptimizer(MasterWorkerOptimizer):
     def __init__(self, optimizer, every_n_batches, name=None, use_locking=False):
         if name is None: name = "FixedMiniBatch{}".format(type(optimizer).__name__)
         super(FixedMiniBatchOptimizer, self).__init__(optimizer,
-            FMBWorker(every_n_batches), name=name, use_locking=use_locking)
+            worker_factory(FMBWorker, every_n_batches), name=name, use_locking=use_locking)
 
 class AnytimeWorker(GenericWorker):
     def __init__(self, time_limit_sec):
@@ -306,4 +324,4 @@ class AnytimeOptimizer(MasterWorkerOptimizer):
     def __init__(self, optimizer, time_limit_sec, name=None, use_locking=False):
         if name is None: name = "Anytime{}".format(type(optimizer).__name__)
         super(AnytimeOptimizer, self).__init__(optimizer,
-            AnytimeWorker(time_limit_sec), name=name, use_locking=use_locking)
+            worker_factory(AnytimeWorker, time_limit_sec), name=name, use_locking=use_locking)

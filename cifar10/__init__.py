@@ -1,4 +1,5 @@
 import os
+import random
 import tarfile
 import pickle
 import numpy as np
@@ -155,15 +156,15 @@ def make_model(x,y,keep_prob):
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32), name='accuracy')
     return accuracy, cost
 
-def permute(x_, y_):
-    p = np.random.permutation(len(x_))
+def permute(x_, y_, seed=None):
+    p = np.random.RandomState(seed=seed).permutation(len(x_))
     return x_[p], y_[p]
 
 def input_generator(batch_size):
     epoch = 0
     while True:
         n_batches = 5
-        for batch_id in range(1, n_batches + 1):
+        for batch_id in random.sample(range(1, n_batches + 1), n_batches):
             features, labels = permute(*load_preproc_batch('data_batch_%d'%batch_id))
             for start in range(0, len(features), batch_size):
                 end = min(start + batch_size, len(features))
@@ -180,7 +181,7 @@ def get_everything(batch_size, test_size=100):
     accuracy, loss = make_model(x,y,keep_prob)
     generator = input_generator(batch_size)
 
-    x_test, y_test = permute(*load_preproc_batch('test_batch'))
+    x_test, y_test = permute(*load_preproc_batch('test_batch'), seed=test_size)
     x_test, y_test = x_test[:test_size], y_test[:test_size]
 
     def get_train_fd():

@@ -23,13 +23,12 @@ class CSVFile:
 
 
 class WorkerProfiler:
-    def __init__(self, dump_freq, work_dir=None, log=None):
-        self.log = log
+    def __init__(self, dump_freq, columns, work_dir=None):
+        self.reset()
         self.dump_freq = dump_freq
         self.csv = None if (work_dir is None) else \
                    CSVFile('worker_stats.csv', work_dir, \
-                   ['rank', 'compute_time_master', 'compute_time_worker', 'difference'])
-        self.reset()
+                           columns + ['compute_time_master'])
 
     def reset(self):
         self.step_count = 0
@@ -40,10 +39,9 @@ class WorkerProfiler:
         self.step_count += 1
         return self
 
-    def on_result(self, rank, compute_time_worker):
+    def on_result(self, data):
         compute_time_master = time.time() - self.started
-        self.cache.append([rank, compute_time_master, compute_time_worker, 
-                           compute_time_master-compute_time_worker])
+        self.cache.append(data + [compute_time_master])
 
     def __exit__(self, type, value, traceback):
         if self.step_count%self.dump_freq==0 and self.csv is not None:
