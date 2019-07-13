@@ -69,8 +69,8 @@ def get_mnist():
     assert len(x_test) == len(y_test)
     return (x_train, y_train), (x_test, y_test)
 
-def permute(x_, y_):
-    p = np.random.permutation(len(x_))
+def permute(x_, y_, seed=None):
+    p = np.random.RandomState(seed=seed).permutation(len(x_))
     return x_[p], y_[p]
 
 def input_generator(x_train, y_train, batch_size):
@@ -88,7 +88,7 @@ def get_everything(batch_size, test_size=100):
     accuracy, loss = conv_model(image, label)
     (x_train, y_train), (x_test, y_test) = get_mnist()
     generator = input_generator(x_train, y_train, batch_size)
-    x_test, y_test = permute(x_test, y_test)
+    x_test, y_test = permute(x_test, y_test, seed=test_size)
     x_test, y_test = x_test[:test_size], y_test[:test_size]
     def get_train_fd():
         return dict(zip([image, label], next(generator)))
