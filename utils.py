@@ -39,7 +39,7 @@ class WorkerProfiler:
         self.step_count += 1
         return self
 
-    def on_result(self, data):
+    def on_result(self, *data):
         compute_time_master = time.time() - self.started
         self.cache.append(data + [compute_time_master])
 
