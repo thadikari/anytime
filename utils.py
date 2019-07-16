@@ -25,23 +25,26 @@ class CSVFile:
 class WorkerProfiler:
     def __init__(self, dump_freq, columns, work_dir=None):
         self.reset()
+        self.step_count = 0
         self.dump_freq = dump_freq
         self.csv = None if (work_dir is None) else \
                    CSVFile('worker_stats.csv', work_dir, \
-                           columns + ['compute_time_master'])
+                           ['time', 'step'] + columns + ['compute_time_master'])
 
     def reset(self):
-        self.step_count = 0
         self.cache = []
 
     def __enter__(self):
-        self.started = time.time()
+        if self.step_count==0: self.training_started = time.time()
+        self.round_started = time.time()
         self.step_count += 1
         return self
 
-    def on_result(self, *data):
-        compute_time_master = time.time() - self.started
-        self.cache.append(data + [compute_time_master])
+    def on_result(self, data):
+        curr = time.time()
+        elapsed_total = curr - self.training_started
+        compute_time_master = curr - self.round_started
+        self.cache.append([elapsed_total, self.step_count] + data + [compute_time_master])
 
     def __exit__(self, type, value, traceback):
         if self.step_count%self.dump_freq==0 and self.csv is not None:
