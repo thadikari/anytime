@@ -31,6 +31,10 @@ def setup_parser():
                                         [[0, 0, .4], [0, .4, .3], [2, .3, .2], [5, .3, .1]]
                                         )
 
+    parser.add_argument('--starter_learning_rate', default=0.001, type=float)
+    parser.add_argument('--decay_steps', default=50, type=int)
+    parser.add_argument('--decay_rate', default=1, type=float)
+
     parser.add_argument('--extra', default=None, type=str)
     parser.add_argument('--no_stats', help='do not save stats', action='store_true')
     parser.add_argument('--log_freq', default=1, type=int)
@@ -38,14 +42,11 @@ def setup_parser():
 
 
 def main(a):
-    starter_learning_rate = 0.001
-    decay_steps, decay_rate = 50, 0.96
-    last_step = 1000000
-    test_size = 100
+    # test_size = 100
 
     SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
     extra_line = '' if a.extra is None else '__%s'%a.extra
-    run_id = f'{a.model}{extra_line}__{a.dist_opt}_{a.dist_param:g}_{a.batch_size}__{a.intr_opt}_{starter_learning_rate:g}_{decay_steps}_{decay_rate:g}__{a.induce}'
+    run_id = f'{a.model}{extra_line}__{a.dist_opt}_{a.dist_param:g}_{a.batch_size}__{a.intr_opt}_{a.starter_learning_rate:g}_{a.decay_steps}_{a.decay_rate:g}__{a.induce}'
     print('run_id: %s'%run_id)
     logs_dir = None if a.no_stats else os.path.join(SCRATCH, 'checkpoints', run_id)
 
@@ -56,12 +57,12 @@ def main(a):
             if not os.path.exists(logs_dir): os.mkdir(logs_dir)
             with open(os.path.join(logs_dir, 'args'), 'w') as fp_:
                 json.dump(vars(a), fp_, indent=4)
-    hvd.set_work_dir(logs_dir) 
-    loss, accuracy, get_train_fd, get_test_fd = getattr(globals()[a.model], 'get_everything')(a.batch_size, test_size=test_size)
+    hvd.set_work_dir(logs_dir)
+    loss, accuracy, get_train_fd, get_test_fd = getattr(globals()[a.model], 'get_everything')(a.batch_size)#, test_size=test_size)
 
     global_step = tf.train.get_or_create_global_step()
-    learning_rate = tf.compat.v1.train.exponential_decay(starter_learning_rate,
-                    global_step, decay_steps, decay_rate, staircase=True)
+    learning_rate = tf.compat.v1.train.exponential_decay(a.starter_learning_rate,
+                    global_step, a.decay_steps, a.decay_rate, staircase=True)
 
     # Horovod: adjust learning rate based on number of GPUs.
     # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
@@ -74,12 +75,11 @@ def main(a):
     elif a.dist_opt == 'amb': opt = hvd.AnytimeMiniBatchOptimizer(opt, time_limit_sec=float(a.dist_param))
 
     train_op = opt.minimize(loss, global_step=global_step)
-    hooks = [hvd.BroadcastGlobalVariablesHook(0),
-             tf.train.StopAtStepHook(last_step=last_step),]# // hvd.size()),
-    if hvd.rank()==0:
-        hooks.append(hvd.CSVLoggingHook(every_n_iter=a.log_freq, 
-                     train_tensors={'step':global_step, 'loss':loss, 'learning_rate':learning_rate}, 
-                     test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)) # 'accuracy':accuracy
+    hooks = [hvd.BroadcastGlobalVariablesHook(),
+             #tf.train.StopAtStepHook(last_step=last_step), # // hvd.size()),
+             hvd.LoggingHook(every_n_steps=a.log_freq, global_step=global_step,
+                 train_tensors={'step':global_step, 'loss':loss, 'learning_rate':learning_rate},
+                 test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)]
 
     with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
         while not mon_sess.should_stop():

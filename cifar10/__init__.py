@@ -173,7 +173,7 @@ def input_generator(batch_size):
         epoch += 1
 
 # https://github.com/deep-diver/CIFAR10-img-classification-tensorflow
-def get_everything(batch_size, test_size=100):
+def get_everything(batch_size):#, test_size=100):
     x = tf.placeholder(tf.float32, shape=(None, 32, 32, 3), name='input_x')
     y =  tf.placeholder(tf.float32, shape=(None, 10), name='output_y')
     keep_prob = tf.placeholder(tf.float32, name='keep_prob')
@@ -181,13 +181,21 @@ def get_everything(batch_size, test_size=100):
     accuracy, loss = make_model(x,y,keep_prob)
     generator = input_generator(batch_size)
 
-    x_test, y_test = permute(*load_preproc_batch('test_batch'), seed=test_size)
-    x_test, y_test = x_test[:test_size], y_test[:test_size]
+    # x_test, y_test = permute(*load_preproc_batch('test_batch'), seed=test_size)
+    # x_test, y_test = x_test[:test_size], y_test[:test_size]
+    x_test, y_test = load_preproc_batch('test_batch')
 
     def get_train_fd():
         x_, y_ = next(generator)
         return {x:x_, y:y_, keep_prob:0.7}
-    return loss, accuracy, get_train_fd, lambda: {x:x_test, y:y_test, keep_prob:1.0}
+
+    def get_test_fd(block, num_blocks):
+        block_size = int(len(x_test)/num_blocks)
+        # print(block, num_blocks, block_size, block_size*block, block_size*(block+1))
+        start, end = block_size*block, block_size*(block+1)
+        return {x:x_test[start:end], y:y_test[start:end], keep_prob:1.0}
+
+    return loss, accuracy, get_train_fd, get_test_fd
 
 #     valid_features, valid_labels = pickle.load(open('preprocess_validation.p', mode='rb'))
 # accuracy

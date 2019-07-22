@@ -83,13 +83,21 @@ def input_generator(x_train, y_train, batch_size):
             index += batch_size
 
 
-def get_everything(batch_size, test_size=100):
+def get_everything(batch_size):#, test_size=100):
     image, label = tf.placeholder(tf.float32, [None, 784], name='image'), tf.placeholder(tf.float32, [None], name='label')
     accuracy, loss = conv_model(image, label)
     (x_train, y_train), (x_test, y_test) = get_mnist()
     generator = input_generator(x_train, y_train, batch_size)
-    x_test, y_test = permute(x_test, y_test, seed=test_size)
-    x_test, y_test = x_test[:test_size], y_test[:test_size]
+    # x_test, y_test = permute(x_test, y_test, seed=test_size)
+    # x_test, y_test = x_test[:test_size], y_test[:test_size]
+
     def get_train_fd():
         return dict(zip([image, label], next(generator)))
-    return loss, accuracy, get_train_fd, lambda: {image:x_test, label:y_test}
+
+    def get_test_fd(block, num_blocks):
+        block_size = int(len(x_test)/num_blocks)
+        # print(block, num_blocks, block_size, block_size*block, block_size*(block+1))
+        start, end = block_size*block, block_size*(block+1)
+        return {image:x_test[start:end], label:y_test[start:end]}
+
+    return loss, accuracy, get_train_fd, get_test_fd

@@ -11,6 +11,7 @@ import utils
 MPI = None
 comm = None
 log = None
+ROOT_RANK = 0
 MPI_RANK = None
 MPI_SIZE = None
 WORK_DIR = None
@@ -63,23 +64,22 @@ def bcast_func(root_rank, *data):
     log.debug('Broadcast from [%d], rank [%d]', root_rank, rank())
     return comm.bcast(data, root=root_rank)
 
-def broadcast_assign_vars(vars, root_rank):
-    nvars = tf.py_func(func=bcast_func, inp=[root_rank] + list(vars),
+def broadcast_assign_vars(vars):
+    nvars = tf.py_func(func=bcast_func, inp=[ROOT_RANK] + list(vars),
                        Tout=tuple(var.dtype for var in vars))
     return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
 
 
 class BroadcastGlobalVariablesHook(tf.train.SessionRunHook):
-    def __init__(self, root_rank, device=''):
+    def __init__(self, device=''):
         super(BroadcastGlobalVariablesHook, self).__init__()
-        self.root_rank = root_rank
         self.bcast_op = None
         self.device = device
 
     def begin(self):
         if not self.bcast_op or self.bcast_op.graph != tf.get_default_graph():
             with tf.device(self.device):
-                self.bcast_op = broadcast_assign_vars(tf.global_variables(), self.root_rank)
+                self.bcast_op = broadcast_assign_vars(tf.global_variables())
 
     def after_create_session(self, session, coord):
         session.run(self.bcast_op)
@@ -89,60 +89,72 @@ from tensorflow.python.training import session_run_hook
 from tensorflow.python.training.session_run_hook import SessionRunArgs
 from tensorflow.python.training.basic_session_run_hooks import _as_graph_element
 
-class CSVLoggingHook(session_run_hook.SessionRunHook):
-    def __init__(self, every_n_iter, train_tensors, test_tensors={}, get_test_fd=None, flush_every_n_iter=10):
+class LoggingHook(session_run_hook.SessionRunHook):
+    def __init__(self, every_n_steps, global_step, train_tensors, test_tensors={}, get_test_fd=None, flush_every_n_steps=10):
         self._train_dict = train_tensors
         self._test_dict = test_tensors
         self._get_test_fd = get_test_fd
-        self._every_n_iter = every_n_iter
-        self._flush_every_n_iter = flush_every_n_iter
+        self._every_n_steps = every_n_steps
+        self._global_step = global_step
+        self._flush_every_n_steps = flush_every_n_steps
         self._tag_order = list(self._train_dict.keys()) + list(self._test_dict.keys())
-        self._csv = None if WORK_DIR is None else \
+        self._csv = None if WORK_DIR is None or ROOT_RANK!=rank() else \
                     utils.CSVFile('master_stats.csv', WORK_DIR, ['time'] + self._tag_order)
 
     def begin(self):
-        self._iter_count = 0
+        self._start_time = time.time()
+        self._should_trigger = True
         self._last_time = None
-        self._test_tensors = list(self._test_dict.values())
+
+        self._step_tensors = {'_global_step': self._global_step}
         self._train_tensors = {tag: _as_graph_element(tensor)
                                for (tag, tensor) in self._train_dict.items()}
+        self._train_tensors['_global_step'] = self._global_step
+        self._test_tensors = list(self._test_dict.values())
 
     def before_run(self, run_context):
-        if self._iter_count==0: self._start_time = time.time()
-        self._should_trigger = (self._iter_count%self._every_n_iter==0)
-        return SessionRunArgs(self._train_tensors) if self._should_trigger else None
+        args = self._train_tensors if self._should_trigger else self._step_tensors
+        return SessionRunArgs(args)
 
     def after_run(self, run_context, run_values):
+        curr = run_values.results['_global_step']
         if self._should_trigger:
+            self.on_new_global_step(run_context.session, run_values.results)
+            self._should_trigger = False
+            self._last_time = time.time()
+            self._last_step = curr
 
-            if self._test_tensors:
-                test_vals = run_context.session.run(self._test_tensors,
-                                                    feed_dict=self._get_test_fd())
-            else:
-                test_vals = []
+            if self._csv is not None and curr%self._flush_every_n_steps==0:
+                self._csv.flush()
 
-            train_vals = run_values.results
-            stats = list(map(str, [train_vals[key] for key in self._train_dict.keys()] + test_vals))
+        if self._last_step != curr:
+            self._should_trigger = True
+
+    def on_new_global_step(self, sess, train_vals):
+        if self._test_tensors:
+            test_vals = sess.run(self._test_tensors, feed_dict=self._get_test_fd(rank(), size()))
+        else:
+            test_vals = []
+
+        rank_stats = [train_vals[key] for key in self._train_dict.keys()] + test_vals
+        all_stats = comm.gather(rank_stats, root=ROOT_RANK)
+
+        if rank()==0:
+            stats = list(sum(l_)/len(l_) for l_ in zip(*all_stats))
             if self._csv is not None: self._csv.writerow([time.time()-self._start_time] + stats, False)
-
-            line = ', '.join(map(lambda a_,b_: '%s = %s'%(a_,b_), self._tag_order, stats))
+            line = ', '.join(map(lambda a_,b_: '%s = %g'%(a_,b_), self._tag_order, stats))
             if self._last_time is None: #tf.get_logger()
                 log.info(line)
             else:
                 log.info('%s (%.3f sec)'%(line, time.time()-self._last_time))
 
-            self._last_time = time.time()
-
-        if self._csv is not None and self._iter_count%self._flush_every_n_iter==0:
-            self._csv.flush()
-
-        self._iter_count += 1
-
 
 class GenericOptimizer(tf.train.Optimizer):
     def __init__(self, optimizer, max_sleep_time, name=None, use_locking=False):
         self.opt = optimizer
-        self.prof = utils.WorkerTag()
+        self.prof = utils.WorkerProfiler(10,
+                    ['num_batches', 'computation', 'communication'],
+                    WORK_DIR if rank()==ROOT_RANK else None)
         if INDUCE_STRAGGLERS: self.straggler = Straggler(max_sleep_time)
         self.num_batches = tf.get_variable('num_batches', dtype=tf.int32, shape=(), initializer=tf.zeros_initializer(), trainable=False)
         super(GenericOptimizer, self).__init__(name=name, use_locking=use_locking)
@@ -195,27 +207,33 @@ class GenericOptimizer(tf.train.Optimizer):
 
     def on_new_round(self):
         self.on_new_round_()
-        self.prof.tag('compute')
+        self.prof.reset_begin('computation')
         if INDUCE_STRAGGLERS: self.straggler.induce()
 
     # https://mpi4py.readthedocs.io/en/stable/tutorial.html
     # http://pages.tacc.utexas.edu/~eijkhout/pcse/html/
     # https://nyu-cds.github.io/python-mpi/05-collectives/
+
+    # https://github.com/erdc/mpi4py/blob/master/src/MPI/msgbuffer.pxi
+    # https://github.com/erdc/mpi4py/blob/master/demo/reductions/test_reductions.py
     def all_reduce_func(self, num_batches, *grad_accs):
-        log.info('Sent num_batches for [%s]', num_batches)
-        return list(grad/num_batches for grad in grad_accs)
-        comm.Reduce([grad_accs[0], MPI.DOUBLE], None, op=MPI.SUM)
-        log.info('Sent grad_accs for [%s] batches, total [%s]', num_batches, 0)
-        total = comm.reduce(num_batches, op=MPI.SUM)
-        log.info('Sent grad_accs for [%d] batches, total [%d]', num_batches, total)
-        for i in range(len(grad_accs)):
-            comm.Reduce(None, [acc[i], MPI.DOUBLE], op=MPI.SUM)
-        last_send = self.prof.get('send')
-        compute_time = self.prof.tag('send')
-        log.info('Sending! Slept [%g], sending [%d] batches, compute_time [%g], last_idle [%g], last_send [%g]', self.sleep_time, num_batches, compute_time, self.prof.get('idle'), last_send)
-        comm.send((rank(), grad_accs, num_batches, compute_time), dest=0)
-        self.on_dispatch_done()
-        self.prof.tag('idle')
+        self.prof.begin('communication')
+        total = comm.allreduce(num_batches, op=MPI.SUM)
+        log.debug('Sent grad_accs for [%s] batches, total [%s]', num_batches, total)
+        # log.info('SS: %s'%grad_accs[0][0][0][0][:4])
+        for acc in grad_accs:
+            comm.Allreduce(MPI.IN_PLACE, acc, op=MPI.SUM)
+            np.divide(acc, total, out=acc)
+        # log.info('EE: %s'%grad_accs[0][0][0][0][:4])
+
+        self.prof.tag('num_batches', num_batches)
+        self.prof.tag('rank', rank())
+
+        rank_stats = self.prof.end()
+        all_stats = comm.gather(rank_stats, root=ROOT_RANK)
+        if ROOT_RANK==rank(): self.prof.dump(all_stats)
+
+        return grad_accs
 
 
 class Straggler:
@@ -240,7 +258,7 @@ class FixedMiniBatchOptimizer(GenericOptimizer):
     def __init__(self, optimizer, every_n_batches, name=None, use_locking=False):
         self.every_n_batches, self.batches_count = every_n_batches, 0
         if name is None: name = "FixedMiniBatch{}".format(type(optimizer).__name__)
-        super(FixedMiniBatchOptimizer, self).__init__(optimizer, 
+        super(FixedMiniBatchOptimizer, self).__init__(optimizer,
             1e9, name=name, use_locking=use_locking)
 
     def is_dispatch_now(self):
