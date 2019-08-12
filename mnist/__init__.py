@@ -17,17 +17,17 @@ def conv_model(feature, target):
     feature = tf.reshape(feature, [-1, 28, 28, 1])
 
     # First conv layer will compute 32 features for each 5x5 patch
-    with tf.variable_scope('conv_layer1'):
+    with tf.compat.v1.variable_scope('conv_layer1'):
         h_conv1 = layers.conv2d(feature, 32, kernel_size=[5, 5],
                                 activation=tf.nn.relu, padding="SAME")
-        h_pool1 = tf.nn.max_pool(
+        h_pool1 = tf.nn.max_pool2d(
             h_conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
     # Second conv layer will compute 64 features for each 5x5 patch.
-    with tf.variable_scope('conv_layer2'):
+    with tf.compat.v1.variable_scope('conv_layer2'):
         h_conv2 = layers.conv2d(h_pool1, 64, kernel_size=[5, 5],
                                 activation=tf.nn.relu, padding="SAME")
-        h_pool2 = tf.nn.max_pool(
+        h_pool2 = tf.nn.max_pool2d(
             h_conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
         # reshape tensor into a batch of vectors
         h_pool2_flat = tf.reshape(h_pool2, [-1, 7 * 7 * 64])
@@ -39,7 +39,7 @@ def conv_model(feature, target):
     # Compute logits (1 per class) and compute loss.
     logits = layers.dense(h_fc1, 10, activation=None)
     # loss = tf.reduce_sum(tf.losses.softmax_cross_entropy(target_1h, logits, reduction='none'))
-    loss = tf.losses.softmax_cross_entropy(target_1h, logits)
+    loss = tf.compat.v1.losses.softmax_cross_entropy(target_1h, logits)
     predict = tf.argmax(logits, 1)
     is_correct = tf.equal(tf.cast(target, 'int64'), tf.argmax(logits, 1))
     accuracy = tf.reduce_mean(tf.cast(is_correct, 'float'))
@@ -73,6 +73,7 @@ def permute(x_, y_, seed=None):
     p = np.random.RandomState(seed=seed).permutation(len(x_))
     return x_[p], y_[p]
 
+
 def input_generator(x_train, y_train, batch_size):
     while True:
         x_train, y_train = permute(x_train, y_train)
@@ -81,6 +82,11 @@ def input_generator(x_train, y_train, batch_size):
             yield x_train[index:index + batch_size], \
                   y_train[index:index + batch_size],
             index += batch_size
+
+
+def make_input_generator(batch_size):
+    (x_train, y_train), (x_test, y_test) = get_mnist()
+    return input_generator(x_train, y_train, batch_size)
 
 
 def get_everything(batch_size, test_size=100):
