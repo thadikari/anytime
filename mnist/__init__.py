@@ -20,14 +20,14 @@ def conv_model(feature, target):
     with tf.compat.v1.variable_scope('conv_layer1'):
         h_conv1 = layers.conv2d(feature, 32, kernel_size=[5, 5],
                                 activation=tf.nn.relu, padding="SAME")
-        h_pool1 = tf.nn.max_pool2d(
+        h_pool1 = tf.nn.max_pool(
             h_conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
     # Second conv layer will compute 64 features for each 5x5 patch.
     with tf.compat.v1.variable_scope('conv_layer2'):
         h_conv2 = layers.conv2d(h_pool1, 64, kernel_size=[5, 5],
                                 activation=tf.nn.relu, padding="SAME")
-        h_pool2 = tf.nn.max_pool2d(
+        h_pool2 = tf.nn.max_pool(
             h_conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
         # reshape tensor into a batch of vectors
         h_pool2_flat = tf.reshape(h_pool2, [-1, 7 * 7 * 64])

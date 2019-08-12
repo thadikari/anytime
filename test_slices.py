@@ -91,7 +91,8 @@ def main():
 
     elapsed = time.time()-start_t
 
-    file_path = 'data.json'
+    SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
+    file_path = os.path.join(SCRATCH, 'data.json')
     data = safe_read_json(file_path)
 
     dd = safe_get_key(safe_get_key(data, str(args.batch_size), {}), str(args.num_splits), {})
@@ -104,7 +105,7 @@ def main():
 
 def run_batch():
     import subprocess
-    for i in range(12,14):
+    for i in range(2,20):
         for j in range(i):
             print(2**i,2**j)
             subprocess.call(['python', '-u', 'test_slices.py', 'main',
@@ -115,7 +116,9 @@ def plot():
     import matplotlib.pyplot as plt
     from pathlib import Path
 
-    file_path = 'data.json'
+    file_name = 'ec2-m3-xlarge.json'
+    file_name = 'data.json'
+    file_path = os.path.join('..', 'data', 'test_slices', file_name)
     data = safe_read_json(file_path)
     ax1, ax2 = plt.subplot(121), plt.subplot(122)
     for batch_size in sorted(map(int, list(data.keys()))):
@@ -131,7 +134,7 @@ def plot():
     ax1.set_xlabel('Number of splits'); ax1.set_ylabel('Time per step')
     ax1.set_xscale('log', basex=2); ax1.set_yscale('log'); ax1.legend(loc='best')
 
-    ax2.set_xlabel('Micro batch size'); ax2.set_ylabel('Time per sample')
+    ax2.set_xlabel('Split size'); ax2.set_ylabel('Time per sample')
     ax2.set_xscale('log', basex=2); ax2.set_yscale('log'); ax2.legend(loc='best')
 
     plt.show()
