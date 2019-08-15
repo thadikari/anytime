@@ -92,10 +92,11 @@ def get_data():
     do_all_('test_batch')
 
 def conv_net(x, keep_prob):
-    conv1_filter = tf.Variable(tf.truncated_normal(shape=[3, 3, 3, 64], mean=0, stddev=0.08))
-    conv2_filter = tf.Variable(tf.truncated_normal(shape=[3, 3, 64, 128], mean=0, stddev=0.08))
-    conv3_filter = tf.Variable(tf.truncated_normal(shape=[5, 5, 128, 256], mean=0, stddev=0.08))
-    conv4_filter = tf.Variable(tf.truncated_normal(shape=[5, 5, 256, 512], mean=0, stddev=0.08))
+    def initializer(shape): return (lambda: tf.truncated_normal(shape=shape, mean=0, stddev=0.08))
+    conv1_filter = tf.Variable(initializer([3, 3, 3, 64]))
+    conv2_filter = tf.Variable(initializer([3, 3, 64, 128]))
+    conv3_filter = tf.Variable(initializer([5, 5, 128, 256]))
+    conv4_filter = tf.Variable(initializer([5, 5, 256, 512]))
 
     # 1, 2
     conv1 = tf.nn.conv2d(x, conv1_filter, strides=[1,1,1,1], padding='SAME')
@@ -173,21 +174,31 @@ def input_generator(batch_size):
         epoch += 1
 
 # https://github.com/deep-diver/CIFAR10-img-classification-tensorflow
-def get_everything(batch_size, test_size=100):
+def get_fac_elements(batch_size):
+
     x = tf.placeholder(tf.float32, shape=(None, 32, 32, 3), name='input_x')
     y =  tf.placeholder(tf.float32, shape=(None, 10), name='output_y')
     keep_prob = tf.placeholder(tf.float32, name='keep_prob')
 
-    accuracy, loss = make_model(x,y,keep_prob)
+    class ModelFac:
+        def __call__(self, feature, target):
+            self.accuracy, self.loss = make_model(feature, target, keep_prob)
+            return self.loss
+
+        def get_metrics(self):
+            return self.accuracy, self.loss
+
+    # accuracy, loss = make_model(x,y,keep_prob)
     generator = input_generator(batch_size)
 
-    x_test, y_test = permute(*load_preproc_batch('test_batch'), seed=test_size)
-    x_test, y_test = x_test[:test_size], y_test[:test_size]
+    x_test, y_test = load_preproc_batch('test_batch')
+    # x_test, y_test = permute(*load_preproc_batch('test_batch'), seed=test_size)
+    # x_test, y_test = x_test[:test_size], y_test[:test_size]
 
     def get_train_fd():
         x_, y_ = next(generator)
         return {x:x_, y:y_, keep_prob:0.7}
-    return loss, accuracy, get_train_fd, lambda: {x:x_test, y:y_test, keep_prob:1.0}
+    return (x,y), ModelFac(), get_train_fd, lambda: {x:x_test, y:y_test, keep_prob:1.0}
 
 #     valid_features, valid_labels = pickle.load(open('preprocess_validation.p', mode='rb'))
 # accuracy

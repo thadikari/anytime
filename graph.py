@@ -13,6 +13,7 @@ import os
 
 # print(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 # plt.rc('axes', prop_cycle=cycler(color=['r', 'b', 'g', 'y']))
+plt.style.use('classic')
 
 
 def proc_csv(file_path):
@@ -22,8 +23,8 @@ def proc_csv(file_path):
     return dict(zip(rdr_.fieldnames, zip(*cols_))) if cols_ else {}
 
 
-_dir_name = 'current'
-_dir_regex = 'cifar10__set3__*'
+_dir_name = '700_mnist_v4'
+_dir_regex = 'mnist_*'
 # _dir_regex = 'mnist__*'
 # 0.63661977236*0.4*0.3 + 0.4 + 0.5
 
@@ -50,14 +51,13 @@ def worker_stats():
     proc_args = lambda dir_path: json.load(open(os.path.join(dir_path, 'args')))
     data = list(zip(_dir_list, map(proc_worker, _dir_list), map(proc_args, _dir_list)))
 
-    def hist_(ax_, key, x_label, binwidth=None, multiplier=None):
+    def hist_(ax_, key, x_label, binwidth=None):
         ylim = 0
         for dir_path, dd, aa in data:
             col = dd.get(key, [])
             if col:
-                mul_ = 1 if multiplier is None else aa[multiplier]
-                arr = np.array(col)*mul_
-                if isinstance(binwidth, str): binwidth = aa[binwidth]
+                arr = np.array(col)
+                if callable(binwidth): binwidth = binwidth(aa)
                 bins = np.arange(min(arr), max(arr) + binwidth, binwidth)
                 if (len(bins))==1: bins = [bins[0]-binwidth, bins[0]]
 
@@ -73,14 +73,13 @@ def worker_stats():
         ax_.legend(loc='best')
 
     def cum_(ax_):
-        x_key, y_key, x_label, y_label = 'step', 'num_batches', 'Epoch', 'Cumulative sum of examples'
+        x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
         for dir_path, dd, aa in data:
             mul_ = aa['batch_size']
-            try:
-                name = Path(dir_path).name
-                ax_.plot(dd[x_key], np.cumsum(dd[y_key])*mul_, color=get_color(name), label=get_label(Path(dir_path).name))
-                # print(name, max(dd[x_key]), sum(dd[y_key]), sum(dd[y_key])/max(dd[x_key]))
-            except: pass
+            name = Path(dir_path).name
+            ax_.plot(dd[x_key], np.cumsum(dd[y_key])*mul_, color=get_color(name),
+                                                           label=get_label(Path(dir_path).name))
+            # print(name, max(dd[x_key]), sum(dd[y_key]), sum(dd[y_key])/max(dd[x_key]))
         ax_.set_xlabel(x_label)
         ax_.set_ylabel(y_label)
         # ax_.set_yticks([])
@@ -88,8 +87,11 @@ def worker_stats():
         ax_.grid(True, which='both')
 
     return {'hist_compute_time': (lambda ax_: hist_(ax_, 'compute_time_worker', 'Computation time (s)', binwidth=0.1)),
-            'hist_num_batches': (lambda ax_: hist_(ax_, 'num_batches', 'Batch size', binwidth='batch_size', multiplier='batch_size')),
-            'cumsum_vs_time':(lambda ax_: cum_(ax_)),
+            'hist_batch_size': (lambda ax_: hist_(ax_, 'num_samples', 'Batch size',
+                                                   binwidth=lambda aa: aa['batch_size']/aa['amb_num_splits']
+                                                            # computing split_size 
+                                                            )),
+            'cumsum_vs_step':(lambda ax_: cum_(ax_)),
             }
 
 
@@ -117,9 +119,9 @@ def master_stats():
 
     return {'loss_vs_time':(lambda ax_: plot_(ax_, 'time', 'loss', 'Wall clock time (s)', 'Training loss', True)),
             'accuracy_vs_time':(lambda ax_: plot_(ax_, 'time', 'accuracy', 'Wall clock time (s)', 'Test accuracy', True)),
-            'loss_vs_step':(lambda ax_: plot_(ax_, 'step', 'loss', 'Epoch', 'Training loss', True)),
-            'time_vs_step':(lambda ax_: plot_(ax_, 'step', 'time', 'Epoch', 'Wall clock time (s)')),
-            'learning_rate_vs_step':(lambda ax_: plot_(ax_, 'step', 'learning_rate', 'Epoch', 'Learning rate')),
+            'loss_vs_step':(lambda ax_: plot_(ax_, 'step', 'loss', 'Step', 'Training loss', True)),
+            'time_vs_step':(lambda ax_: plot_(ax_, 'step', 'time', 'Step', 'Wall clock time (s)')),
+            'learning_rate_vs_step':(lambda ax_: plot_(ax_, 'step', 'learning_rate', 'Step', 'Learning rate')),
             }
 
 
@@ -138,7 +140,7 @@ def distribution(ax_):
     ax_.set_yticks([])
     ax_.set_ylabel('PDF')
     ax_.set_xlabel('Induced delay (s)')
-    ax_.legend(loc='best')
+    # ax_.legend(loc='best')
 
 
 def all_plots():
@@ -162,14 +164,15 @@ def main():
 
     elif args.type==0:
         gs = gridspec.GridSpec(3, 3)
+        # if args.silent: 
         plt.figure(figsize=(25,15))
         p_ = lambda *k_: [all_plots()[k_[3*i+j]](plt.subplot(gs[j,i]))\
                                         for i in range(3)\
                                             for j in range(3)\
                                                 if k_[3*i+j] is not None]
 
-        p_('distribution', 'hist_compute_time', 'hist_num_batches',
-           'loss_vs_time', 'accuracy_vs_time', 'cumsum_vs_time',
+        p_('distribution', 'hist_compute_time', 'hist_batch_size',
+           'loss_vs_time', 'accuracy_vs_time', 'cumsum_vs_step',
            'loss_vs_step', 'learning_rate_vs_step', 'time_vs_step')
         plot_name = 'all_plots'
 
@@ -191,7 +194,7 @@ def main():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('type', type=int, choices=[0, 1, 2])
+    parser.add_argument('--type', type=int, default=0, choices=[0, 1, 2])
     parser.add_argument('--short_label', action='store_true')
     parser.add_argument('--plot', default='loss_vs_step',
                         choices=['loss_vs_step', 'loss_vs_time', 'accuracy_vs_time', 'time_vs_step'])

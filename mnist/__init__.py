@@ -89,13 +89,29 @@ def make_input_generator(batch_size):
     return input_generator(x_train, y_train, batch_size)
 
 
-def get_everything(batch_size, test_size=100):
-    image, label = tf.placeholder(tf.float32, [None, 784], name='image'), tf.placeholder(tf.float32, [None], name='label')
-    accuracy, loss = conv_model(image, label)
+def get_fac_elements(batch_size):#, test_size=100):
+
+    class ModelFac:
+        def __call__(self, feature, target):
+            self.accuracy, self.loss = conv_model(feature, target)
+            return self.loss
+
+        def get_metrics(self):
+            return self.accuracy, self.loss
+
+    placeholders = tf.placeholder(tf.float32, [None, 784], name='image'),\
+                   tf.placeholder(tf.float32, [None], name='label')
+    image, label = placeholders
     (x_train, y_train), (x_test, y_test) = get_mnist()
     generator = input_generator(x_train, y_train, batch_size)
-    x_test, y_test = permute(x_test, y_test, seed=test_size)
-    x_test, y_test = x_test[:test_size], y_test[:test_size]
+    # x_test, y_test = permute(x_test, y_test, seed=test_size)
+    # x_test, y_test = x_test[:test_size], y_test[:test_size]
     def get_train_fd():
         return dict(zip([image, label], next(generator)))
-    return loss, accuracy, get_train_fd, lambda: {image:x_test, label:y_test}
+    return placeholders, ModelFac(), get_train_fd, lambda: {image:x_test, label:y_test}
+
+
+def get_everything(batch_size):
+    placeholders, model_fac, get_train_fd, get_test_fd = get_fac_elements(batch_size)
+    loss, accuracy = model_fac(*placeholders)
+    return loss, accuracy, get_train_fd, get_test_fd
