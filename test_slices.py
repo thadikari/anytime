@@ -5,7 +5,7 @@ import time
 import json
 import os
 
-import mnist
+import mnist, cifar10
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 
@@ -25,32 +25,25 @@ def safe_get_key(dd, key, val):
 # what parallel_iterations does >> https://github.com/tensorflow/tensorflow/issues/1984
 
 def main():
-    features_pl = tf.compat.v1.placeholder(tf.float32, [None, 784], name='image')
-    labels_pl = tf.compat.v1.placeholder(tf.float32, [None], name='label')
-    opt = tf.train.AdamOptimizer(0.0001)
-
     # batch_size, num_splits = 2**8, 1
     log_every_n_iter = 1
     batch_size, num_splits = args.batch_size, args.num_splits
     split_size = int(batch_size/num_splits)
+
+    model = globals()[args.model]
+    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(batch_size)
+    features_pl, labels_pl = placeholders
+    opt = tf.train.AdamOptimizer(0.0001)
+
     global vars
     vars = None
 
-    def log_(loss, curr_split):#, a0, g0, r0):
-        print('loss: %g, curr_split: %s'%(loss, curr_split))
-        # , a0[0][0][0][0], g0[0][0][0][0], r0[0][0][0][0]))
-
-    def cond_func():
-        print(time.time())
-
     def cond(curr_split, _, *accs):
-        log_func = tf.py_func(func=cond_func, inp=[], Tout=[])
-        #with tf.control_dependencies([log_func]):
         return curr_split < num_splits
 
     def get_grads(features, labels):
         global vars
-        _, loss = mnist.conv_model(features, labels)
+        loss = model_fac(features, labels)
         gradients = opt.compute_gradients(loss)
         grads, vars = zip(*gradients)
         return loss, grads
@@ -65,15 +58,11 @@ def main():
         with tf.control_dependencies(list(grads)):
             return [curr_split+1, loss] + ret_accs
 
-    def create_accs():
-        shapes = [(5,5,1,32), (32), (5,5,32,64), (64),
-                  (3136,1024), (1024), (1024,10), (10)]
-        return list(tf.zeros(shape) for shape in shapes)
-
     if num_splits==1:
         loss, grads = get_grads(features_pl, labels_pl)
     else:
-        _, loss, *grads = tf.while_loop(cond, body, [tf.constant(0), 0.] + create_accs(),
+        accs_0 = list(tf.zeros(shape) for shape in model_fac.get_var_shapes())
+        _, loss, *grads = tf.while_loop(cond, body, [tf.constant(0), 0.] + accs_0,
                          parallel_iterations=1, return_same_structure=True,
                          swap_memory=True)
 
@@ -85,9 +74,8 @@ def main():
              tf.train.StopAtStepHook(last_step=args.last_step)]
     start_t = time.time()
     with tf.compat.v1.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
-        generator = mnist.make_input_generator(batch_size=batch_size)
         while not mon_sess.should_stop():
-            _, loss_ = mon_sess.run([eval_op, loss], feed_dict=dict(zip([features_pl, labels_pl], next(generator))))
+            _, loss_ = mon_sess.run([eval_op, loss], feed_dict=get_train_fd())
 
     elapsed = time.time()-start_t
 
@@ -105,10 +93,11 @@ def main():
 
 def run_batch():
     import subprocess
-    for i in range(2,20):
+    for i in range(12,20):
         for j in range(i):
             print(2**i,2**j)
             subprocess.call(['python', '-u', 'test_slices.py', 'main',
+                             '--model', args.model,
                              '--batch_size', str(2**i),
                              '--num_splits', str(2**j)])
 
@@ -142,6 +131,7 @@ def plot():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('type', choices=['batch', 'main', 'plot'])
+    parser.add_argument('--model', choices=['mnist', 'cifar10'])
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--num_splits', type=int)
     parser.add_argument('--last_step', type=int, default=10)

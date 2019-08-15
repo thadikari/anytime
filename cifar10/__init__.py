@@ -9,6 +9,9 @@ from os.path import isfile, isdir
 from tqdm import tqdm
 
 
+# https://github.com/tensorflow/models/blob/master/tutorials/image/cifar10_estimator/cifar10.py
+# https://towardsdatascience.com/how-to-use-dataset-in-tensorflow-c758ef9e4428
+
 cifar10_dataset_folder_name = 'cifar-10-batches-py'
 data_directory = os.path.join(os.path.expanduser('~'), '.keras', 'cifar10')
 tp_ = lambda *arg_: os.path.join(data_directory, *arg_)
@@ -168,13 +171,14 @@ def input_generator(batch_size):
         for batch_id in random.sample(range(1, n_batches + 1), n_batches):
             features, labels = permute(*load_preproc_batch('data_batch_%d'%batch_id))
             for start in range(0, len(features), batch_size):
-                end = min(start + batch_size, len(features))
+                end = start+batch_size
+                if end>len(features): continue
                 yield features[start:end], labels[start:end]
             print('Epoch {:>2}, CIFAR-10 Batch {}:  '.format(epoch + 1, batch_id))
         epoch += 1
 
 # https://github.com/deep-diver/CIFAR10-img-classification-tensorflow
-def get_fac_elements(batch_size):
+def get_fac_elements(batch_size, test_size=-1):
 
     x = tf.placeholder(tf.float32, shape=(None, 32, 32, 3), name='input_x')
     y =  tf.placeholder(tf.float32, shape=(None, 10), name='output_y')
@@ -185,6 +189,9 @@ def get_fac_elements(batch_size):
             self.accuracy, self.loss = make_model(feature, target, keep_prob)
             return self.loss
 
+        def get_var_shapes(self):
+            return [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]]
+
         def get_metrics(self):
             return self.accuracy, self.loss
 
@@ -192,8 +199,9 @@ def get_fac_elements(batch_size):
     generator = input_generator(batch_size)
 
     x_test, y_test = load_preproc_batch('test_batch')
-    # x_test, y_test = permute(*load_preproc_batch('test_batch'), seed=test_size)
-    # x_test, y_test = x_test[:test_size], y_test[:test_size]
+    if test_size>=0:
+        x_test, y_test = permute(x_test, y_test, seed=test_size)
+        x_test, y_test = x_test[:test_size], y_test[:test_size]
 
     def get_train_fd():
         x_, y_ = next(generator)

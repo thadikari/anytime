@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument('--no_stats', help='do not save stats', action='store_true')
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
+    parser.add_argument('--test_size', default=-1, type=int)
     args = parser.parse_args()
 
     vv = vars(args)
@@ -70,7 +71,7 @@ def main(a):
     hvd.set_work_dir(logs_dir)
 
     model = globals()[a.model]
-    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(a.batch_size)
+    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(a.batch_size, a.test_size)
 
     global_step = tf.train.get_or_create_global_step()
     learning_rate = tf.compat.v1.train.exponential_decay(a.starter_learning_rate,

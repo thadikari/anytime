@@ -317,12 +317,8 @@ class AnytimeMiniBatchWorker(Worker):
             with tf.control_dependencies(ret_accs):
                 return [curr_split+1] + ret_accs
 
-        def create_accs():
-            shapes = [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)]
-            shapes = [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]]
-            return list(tf.zeros(shape) for shape in shapes)
-
-        completed_splits, *grads = tf.while_loop(cond, body, [tf.constant(0)] + create_accs(),
+        accs_0 = list(tf.zeros(shape) for shape in model_fac.get_var_shapes())
+        completed_splits, *grads = tf.while_loop(cond, body, [tf.constant(0)] + accs_0,
                          parallel_iterations=1, return_same_structure=True, swap_memory=True)
         return list(zip(grads, self.vars)), completed_splits*split_size
 
