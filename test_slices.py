@@ -5,7 +5,7 @@ import time
 import json
 import os
 
-import mnist, cifar10
+import mnist, cifar10, toy_model
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 
@@ -93,7 +93,7 @@ def main():
 
 def run_batch():
     import subprocess
-    for i in range(12,20):
+    for i in range(2,20):
         for j in range(i):
             print(2**i,2**j)
             subprocess.call(['python', '-u', 'test_slices.py', 'main',
@@ -131,7 +131,7 @@ def plot():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('type', choices=['batch', 'main', 'plot'])
-    parser.add_argument('--model', choices=['mnist', 'cifar10'])
+    parser.add_argument('--model', choices=['mnist', 'cifar10', 'toy_model'])
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--num_splits', type=int)
     parser.add_argument('--last_step', type=int, default=10)
