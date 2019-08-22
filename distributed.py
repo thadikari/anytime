@@ -18,7 +18,6 @@ WORK_DIR = None
 INDUCE_STRAGGLERS = None
 INDUCE_DIST = None
 
-
 def set_work_dir(work_dir=None):
     global WORK_DIR
     WORK_DIR = work_dir
@@ -155,6 +154,17 @@ def log_d(fmt, *args):
     op = tf.py_func(func=log.debug, inp=[fmt]+[*args], Tout=[])
     return tf.control_dependencies([op])
 
+def mpi_reduce_grads(grads, num_samples, compute_time):
+    # https://mpitutorial.com/tutorials/mpi-scatter-gather-and-allgather/
+    # https://nyu-cds.github.io/python-mpi/05-collectives/
+    compute_times_ll = comm.gather(compute_time, root=0)
+    num_samples_ll = comm.gather(num_samples, root=0)
+    #total = comm.allreduce(num_samples, op=MPI.SUM)
+    for acc in grads:
+        # https://nyu-cds.github.io/python-mpi/05-collectives/
+        comm.Reduce(acc*(0. if rank()==0 else 1.), acc, op=MPI.SUM, root=0)
+    return compute_times_ll, num_samples_ll
+
 
 class Distributor:
     def __init__(self, node):
@@ -201,29 +211,16 @@ class Master:#(tf.train.Optimizer):
 
     # called only in the master node
     def master_func(self):
+        log.debug('Listening to [%d] workers', num_workers())
         self.map_grads(np.multiply, 0.)
-        total_samples, recv_workers = 0, 0
-
+        compute_times_ll, num_samples_ll = mpi_reduce_grads(self.wgrads, 0, 0)
+        compute_times_ll, num_samples_ll = compute_times_ll[1:], num_samples_ll[1:]
+        total = sum(num_samples_ll)
+        for acc in self.wgrads: np.divide(acc, total, out=acc)
         with self.work as ww:
-            log.debug('Listening to [%d] workers', num_workers())
-            while recv_workers < num_workers():
-                # TODO: receive dont create new numy arrays.
-                # Mpi data type, send numpy arrays instead of python pickles
-                # https://mpi4py.readthedocs.io/en/stable/tutorial.html
-                # Try isend ie without wait
-                rank, summed_grads, num_samples, compute_time_worker = comm.recv()
-                self.add_grads(summed_grads)
-                ww.on_result([rank, num_samples, compute_time_worker])
-                total_samples += num_samples
-                recv_workers += 1
-                log.debug('New grad! num_samples=[%d], total_samples=[%d]', num_samples, total_samples)
-            # log.info('[%g]', np.sum(np.abs(self.wgrads[-1]))/total_samples)
-        self.map_grads(np.divide, total_samples)
+            for i in range(num_workers()):
+                ww.on_result([i+1, num_samples_ll[i], compute_times_ll[i]])
         return self.wgrads
-
-    def add_grads(self, grads):
-        for i, arr in enumerate(self.wgrads):
-            self.wgrads[i] = np.add(arr,grads[i], out=arr)
 
     def map_grads(self, func, arg):
         for i, arr in enumerate(self.wgrads):
@@ -269,7 +266,7 @@ class Worker:
         compute_time = self.prof.tag('send')
         log.info('Sending [%d] examples, compute_time [%g], last_idle [%g], last_send [%g]',\
                   num_samples, compute_time, self.prof.get('idle'), last_send)
-        comm.send((rank(), grads, num_samples, compute_time), dest=0)
+        mpi_reduce_grads(grads, num_samples, compute_time)
         self.prof.tag('idle')
 
     def minimize(self, placeholders, model_fac, global_step):
