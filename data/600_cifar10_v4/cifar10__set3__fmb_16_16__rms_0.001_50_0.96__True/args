@@ -1,0 +1,33 @@
+{
+    "dist": [
+        [
+            0,
+            0,
+            0.4
+        ],
+        [
+            0,
+            0.4,
+            0.3
+        ],
+        [
+            2,
+            0.3,
+            0.2
+        ],
+        [
+            5,
+            0.3,
+            0.1
+        ]
+    ],
+    "dist_opt": "fmb",
+    "model": "cifar10",
+    "extra": null,
+    "no_stats": false,
+    "batch_size": 16,
+    "induce": true,
+    "dist_param": 16.0,
+    "log_freq": 1,
+    "intr_opt": "rms"
+}

@@ -1,0 +1,33 @@
+{
+    "dist_param": 5.5,
+    "batch_size": 16,
+    "log_freq": 1,
+    "dist": [
+        [
+            0,
+            0,
+            0.4
+        ],
+        [
+            0,
+            0.4,
+            0.3
+        ],
+        [
+            2,
+            0.3,
+            0.2
+        ],
+        [
+            5,
+            0.3,
+            0.1
+        ]
+    ],
+    "model": "cifar10",
+    "no_stats": false,
+    "intr_opt": "rms",
+    "extra": "set4",
+    "induce": true,
+    "dist_opt": "amb"
+}

@@ -1,0 +1,4 @@
+*
+!.gitignore
+!test_slices/*
+!600_cifar10_v4/cifar10__set3*
