@@ -19,5 +19,5 @@
 * [`src/test_slices.py`](src/test_slices.py) includes data generating and plotting commands. 
 * See samples in [`data/test_slices`](data/test_slices).
 
-<img src="data/test_slices/toy_model_conv_ec2-t2-micro.png?raw=true" width="500"/>
-<img src="data/test_slices/toy_model_fc_ec2-t2-micro.png?raw=true" width="500"/>
+<img src="data/test_slices/toy_model_conv_ec2-t2-micro.png?raw=true" />
+<img src="data/test_slices/toy_model_fc_ec2-t2-micro.png?raw=true" />
