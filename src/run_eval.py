@@ -56,7 +56,7 @@ def parse_args():
 def main(a):
     SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
     extra_line = '' if a.extra is None else '__%s'%a.extra
-    amb_args = f'__{a.amb_time_limit:g}_{a.amb_num_splits}'
+    amb_args = f'__{a.amb_time_limit:g}_{a.amb_num_splits}' if args.dist_opt=='amb' else '__'
     run_id = f'{a.model}{extra_line}__{a.dist_opt}_{a.intr_opt}_{a.batch_size}{amb_args}__{a.starter_learning_rate:g}_{a.decay_steps}_{a.decay_rate:g}__{a.induce}'
     print('run_id: %s'%run_id)
     logs_dir = None if a.no_stats else os.path.join(SCRATCH, 'checkpoints', run_id)
