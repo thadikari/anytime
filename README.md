@@ -25,8 +25,8 @@ mpi4 python -u run_eval.py mnist amb adm 64 --amb_time_limit 9.2 --amb_num_split
 mpi4 python -u run_eval.py cifar10 amb adm 64 --amb_time_limit 9.2 --amb_num_splits 64 --starter_learning_rate 0.001 --test_size 100
 mpi4 python -u run_eval.py mnist amb rms 4096 --amb_time_limit 9.2 --amb_num_splits 64 --starter_learning_rate 0.001 --induce
 mpiall python -u run_eval.py mnist amb rms 1024 --amb_time_limit 1.9 --amb_num_splits 16
-mpi11 python -u run_eval.py cifar10 amb rms 256 --amb_time_limit 5.5 --amb_num_splits 16 --test_size 100 --induce > ~/checkpoints/output_amb 2>&1
-mpi11 python -u run_eval.py cifar10 fmb rms 256 --test_size 100 --induce > ~/checkpoints/output_fmb 2>&1
+mpi11 python -u run_eval.py cifar10 amb rms 256 --amb_time_limit 5.5 --amb_num_splits 16 --test_size 100 --induce > $SCRATCH/anytime/output_amb 2>&1
+mpi11 python -u run_eval.py cifar10 fmb rms 256 --test_size 100 --induce > $SCRATCH/anytime/output_fmb 2>&1
 ```
 * Here, `mpi1`, `mpi4` and `mpiall` are aliases. For example `mpi4` translates to `mpirun -host master,node001,node002,node003`. 
 * For CIFAR10 it is important to set a low value for `test_size`. Otherwise master will use all 10,000 samples in the test dataset to evaluate the model. As a result workers will have to wait to send updates to the master. 

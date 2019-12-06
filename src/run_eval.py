@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
+    parser.add_argument('--data_dir', default='anytime', type=str)
     args = parser.parse_args()
 
     vv = vars(args)
@@ -53,48 +54,48 @@ def parse_args():
     return args
 
 
-def main(a):
+def main():
     SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
-    extra_line = '' if a.extra is None else '__%s'%a.extra
-    amb_args = f'__{a.amb_time_limit:g}_{a.amb_num_splits}' if args.dist_opt=='amb' else ''
-    run_id = f'{a.model}{extra_line}__{a.dist_opt}_{a.intr_opt}_{a.batch_size}{amb_args}__{a.starter_learning_rate:g}_{a.decay_steps}_{a.decay_rate:g}__{a.induce}'
+    extra_line = '' if _a.extra is None else '__%s'%_a.extra
+    amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_splits}' if _a.dist_opt=='amb' else ''
+    run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{_a.starter_learning_rate:g}_{_a.decay_steps}_{_a.decay_rate:g}__{_a.induce}'
     print('run_id: %s'%run_id)
-    logs_dir = None if a.no_stats else os.path.join(SCRATCH, 'checkpoints', run_id)
+    logs_dir = None if _a.no_stats else os.path.join(SCRATCH, _a.data_dir, run_id)
 
     # Horovod: initialize Horovod.
-    hvd.init(induce_stragglers=a.induce, induce_dist=a.dist)
+    hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist)
     if hvd.rank()==0:
         if logs_dir is not None:
-            if not os.path.exists(logs_dir): os.mkdir(logs_dir)
+            if not os.path.exists(logs_dir): os.makedirs(logs_dir)
             with open(os.path.join(logs_dir, 'args'), 'w') as fp_:
-                json.dump(vars(a), fp_, indent=4)
+                json.dump(vars(_a), fp_, indent=4)
     hvd.set_work_dir(logs_dir)
 
-    model = globals()[a.model]
-    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(a.batch_size, a.test_size)
+    model = globals()[_a.model]
+    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(_a.batch_size, _a.test_size)
 
     global_step = tf.train.get_or_create_global_step()
-    learning_rate = tf.compat.v1.train.exponential_decay(a.starter_learning_rate,
-                    global_step, a.decay_steps, a.decay_rate, staircase=True)
+    learning_rate = tf.compat.v1.train.exponential_decay(_a.starter_learning_rate,
+                    global_step, _a.decay_steps, _a.decay_rate, staircase=True)
 
     # Horovod: adjust learning rate based on number of GPUs.
     # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
-    if a.intr_opt == 'rms': opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
-    elif a.intr_opt == 'adm': opt = tf.train.AdamOptimizer(learning_rate)#*max(1, hvd.size()-1))
-    elif a.intr_opt == 'sgd': opt = tf.train.GradientDescentOptimizer(learning_rate)
+    if _a.intr_opt == 'rms': opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
+    elif _a.intr_opt == 'adm': opt = tf.train.AdamOptimizer(learning_rate)#*max(1, hvd.size()-1))
+    elif _a.intr_opt == 'sgd': opt = tf.train.GradientDescentOptimizer(learning_rate)
 
     # Horovod: add Horovod Distributed Optimizer.
-    if a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt, a.batch_size)
-    elif a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt, a.batch_size,
-                                                a.amb_time_limit, a.amb_num_splits)
+    if _a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt, _a.batch_size)
+    elif _a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt, _a.batch_size,
+                                                _a.amb_time_limit, _a.amb_num_splits)
 
     train_op = dist.minimize(placeholders, model_fac, global_step=global_step)
     accuracy, avg_loss = model_fac.get_metrics()
 
     hooks = [hvd.BroadcastVariablesHook(dist.get_variables(), 0),
-             tf.train.StopAtStepHook(last_step=a.last_step),]# // hvd.size()),
+             tf.train.StopAtStepHook(last_step=_a.last_step),]# // hvd.size()),
     if hvd.rank()==0:
-        hooks.append(hvd.CSVLoggingHook(every_n_iter=a.log_freq,
+        hooks.append(hvd.CSVLoggingHook(every_n_iter=_a.log_freq,
                      train_tensors={'step':global_step, 'loss':avg_loss, 'learning_rate':learning_rate},
                      test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)) # 'accuracy':accuracy
 
@@ -104,6 +105,6 @@ def main(a):
 
 
 if __name__ == '__main__':
-    args = parse_args()
-    print('[Arguments]', vars(args))
-    main(args)
+    _a = parse_args()
+    print('[Arguments]', vars(_a))
+    main()
