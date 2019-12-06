@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument('--no_stats', help='do not save stats', action='store_true')
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
-    parser.add_argument('--test_size', default=-1, type=int)
+    parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     args = parser.parse_args()
 
     vv = vars(args)

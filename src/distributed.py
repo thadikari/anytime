@@ -299,12 +299,24 @@ class AnytimeMiniBatchWorker(Worker):
 
         def cond(curr_split, *accs):
             #with log_d('Condition'):
-            return tf.py_func(func=lambda: self.elapsed()<time_limit, inp=[], Tout=tf.bool)
-            # return curr_split < num_splits
+            prnt = lambda: log.warn('Increase batch_size or decrease the amb_time_limit!')
+            warn = lambda: tf.py_func(func=prnt, inp=[], Tout=[])
+            okay = lambda: tf.no_op()
+            chck = lambda: self.elapsed() < time_limit
+            # check if already have gone through all the slipts, if this happens then should increase the batch size
+            start_, end_ = start_end(curr_split)
+            chk1 = tf.shape(placeholders[0][start_:end_])[0] > 0
+            chk2 = tf.py_func(func=chck, inp=[], Tout=tf.bool)
+            with tf.control_dependencies([tf.cond(chk1, okay, warn)]):
+                return tf.math.logical_and(chk1, chk2)
 
-        def body(curr_split, *accs):
+        def start_end(curr_split):
             start_ = curr_split*split_size
             end_ = start_ + split_size
+            return start_, end_
+
+        def body(curr_split, *accs):
+            start_, end_ = start_end(curr_split)
             loss = model_fac(*(pl[start_:end_] for pl in placeholders))
             grads_and_vars = self._optimizer.compute_gradients(loss)
             grads, self.vars = zip(*grads_and_vars)
