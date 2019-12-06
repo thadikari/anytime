@@ -23,8 +23,8 @@ def proc_csv(file_path):
     return dict(zip(rdr_.fieldnames, zip(*cols_))) if cols_ else {}
 
 
-_dir_name = '700_mnist_v4'
-_dir_regex = 'mnist_*'
+_dir_name = '800_cifar10_v5'
+_dir_regex = 'cifar10_*'
 # _dir_regex = 'mnist__*'
 # 0.63661977236*0.4*0.3 + 0.4 + 0.5
 
@@ -75,7 +75,7 @@ def worker_stats():
     def cum_(ax_):
         x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
         for dir_path, dd, aa in data:
-            mul_ = aa['batch_size']
+            mul_ = 1#aa['batch_size']
             name = Path(dir_path).name
             ax_.plot(dd[x_key], np.cumsum(dd[y_key])*mul_, color=get_color(name),
                                                            label=get_label(Path(dir_path).name))

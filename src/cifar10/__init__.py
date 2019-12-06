@@ -152,13 +152,12 @@ def conv_net(x, keep_prob):
 
 def make_model(x,y,keep_prob):
     logits = conv_net(x, keep_prob)
-    # cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y))
-    cost = tf.losses.softmax_cross_entropy(y, logits)
-    # cost = tf.reduce_sum(tf.losses.softmax_cross_entropy(y, logits, reduction='none'))
-
+    losses = tf.losses.softmax_cross_entropy(y, logits, reduction='none')
+    sum_loss = tf.reduce_sum(losses)
+    avg_loss = tf.reduce_mean(losses)
     correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(y, 1))
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32), name='accuracy')
-    return accuracy, cost
+    return accuracy, sum_loss, avg_loss
 
 def permute(x_, y_, seed=None):
     p = np.random.RandomState(seed=seed).permutation(len(x_))
@@ -186,14 +185,14 @@ def get_fac_elements(batch_size, test_size=-1):
 
     class ModelFac:
         def __call__(self, feature, target):
-            self.accuracy, self.loss = make_model(feature, target, keep_prob)
-            return self.loss
+            self.accuracy, sum_loss, self.avg_loss = make_model(feature, target, keep_prob)
+            return sum_loss
 
         def get_var_shapes(self):
             return [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]]
 
         def get_metrics(self):
-            return self.accuracy, self.loss
+            return self.accuracy, self.avg_loss
 
     # accuracy, loss = make_model(x,y,keep_prob)
     generator = input_generator(batch_size)

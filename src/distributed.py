@@ -264,8 +264,9 @@ class Worker:
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
         compute_time = self.prof.tag('send')
-        log.info('Sending [%d] examples, compute_time [%g], last_idle [%g], last_send [%g]',\
-                  num_samples, compute_time, self.prof.get('idle'), last_send)
+        slp_ = (', sleep_time [%g]'%self.straggler.sleep_time) if INDUCE_STRAGGLERS else ''
+        log.info('Sending [%d] examples%s, compute_time [%g], last_idle [%g], last_send [%g]',\
+                  num_samples, slp_, compute_time, self.prof.get('idle'), last_send)
         mpi_reduce_grads(grads, num_samples, compute_time)
         self.prof.tag('idle')
 
@@ -317,8 +318,8 @@ class AnytimeMiniBatchWorker(Worker):
 
         def body(curr_split, *accs):
             start_, end_ = start_end(curr_split)
-            loss = model_fac(*(pl[start_:end_] for pl in placeholders))
-            grads_and_vars = self._optimizer.compute_gradients(loss)
+            sum_loss = model_fac(*(pl[start_:end_] for pl in placeholders))
+            grads_and_vars = self._optimizer.compute_gradients(sum_loss)
             grads, self.vars = zip(*grads_and_vars)
             # print(list(ss.get_shape().as_list() for ss in self.vars))
             ret_accs = list(acc+grad for acc,grad in zip(accs, grads))

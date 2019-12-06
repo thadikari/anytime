@@ -38,13 +38,14 @@ def conv_model(feature, target):
 
     # Compute logits (1 per class) and compute loss.
     logits = layers.dense(h_fc1, 10, activation=None)
-    # loss = tf.reduce_sum(tf.losses.softmax_cross_entropy(target_1h, logits, reduction='none'))
-    loss = tf.compat.v1.losses.softmax_cross_entropy(target_1h, logits)
+    losses = tf.compat.v1.losses.softmax_cross_entropy(target_1h, logits, reduction='none')
+    sum_loss = tf.reduce_sum(losses)
+    avg_loss = tf.reduce_mean(losses)
     predict = tf.argmax(logits, 1)
     is_correct = tf.equal(tf.cast(target, 'int64'), tf.argmax(logits, 1))
     accuracy = tf.reduce_mean(tf.cast(is_correct, 'float'))
     # error = 100*(1 - tf.reduce_mean(tf.cast(self.is_correct, 'float')))
-    return accuracy, loss
+    return accuracy, sum_loss, avg_loss
 
 def get_mnist():
     # Keras automatically creates a cache directory in ~/.keras/datasets for
@@ -93,14 +94,14 @@ def get_fac_elements(batch_size, test_size=-1):
 
     class ModelFac:
         def __call__(self, feature, target):
-            self.accuracy, self.loss = conv_model(feature, target)
-            return self.loss
+            self.accuracy, sum_loss, self.avg_loss = conv_model(feature, target)
+            return sum_loss
 
         def get_var_shapes(self):
             return [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)]
 
         def get_metrics(self):
-            return self.accuracy, self.loss
+            return self.accuracy, self.avg_loss
 
     placeholders = tf.placeholder(tf.float32, [None, 784], name='image'),\
                    tf.placeholder(tf.float32, [None], name='label')
@@ -117,5 +118,5 @@ def get_fac_elements(batch_size, test_size=-1):
 
 def get_everything(batch_size):
     placeholders, model_fac, get_train_fd, get_test_fd = get_fac_elements(batch_size)
-    loss, accuracy = model_fac(*placeholders)
-    return loss, accuracy, get_train_fd, get_test_fd
+    accuracy, sum_loss, avg_loss = model_fac(*placeholders)
+    return accuracy, get_train_fd, get_test_fd

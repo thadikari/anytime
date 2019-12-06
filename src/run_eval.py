@@ -56,7 +56,7 @@ def parse_args():
 def main(a):
     SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
     extra_line = '' if a.extra is None else '__%s'%a.extra
-    amb_args = f'__{a.amb_time_limit:g}_{a.amb_num_splits}' if args.dist_opt=='amb' else '__'
+    amb_args = f'__{a.amb_time_limit:g}_{a.amb_num_splits}' if args.dist_opt=='amb' else ''
     run_id = f'{a.model}{extra_line}__{a.dist_opt}_{a.intr_opt}_{a.batch_size}{amb_args}__{a.starter_learning_rate:g}_{a.decay_steps}_{a.decay_rate:g}__{a.induce}'
     print('run_id: %s'%run_id)
     logs_dir = None if a.no_stats else os.path.join(SCRATCH, 'checkpoints', run_id)
@@ -89,13 +89,13 @@ def main(a):
                                                 a.amb_time_limit, a.amb_num_splits)
 
     train_op = dist.minimize(placeholders, model_fac, global_step=global_step)
-    accuracy, loss = model_fac.get_metrics()
+    accuracy, avg_loss = model_fac.get_metrics()
 
     hooks = [hvd.BroadcastVariablesHook(dist.get_variables(), 0),
              tf.train.StopAtStepHook(last_step=a.last_step),]# // hvd.size()),
     if hvd.rank()==0:
         hooks.append(hvd.CSVLoggingHook(every_n_iter=a.log_freq,
-                     train_tensors={'step':global_step, 'loss':loss, 'learning_rate':learning_rate},
+                     train_tensors={'step':global_step, 'loss':avg_loss, 'learning_rate':learning_rate},
                      test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)) # 'accuracy':accuracy
 
     with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
