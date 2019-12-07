@@ -10,11 +10,13 @@
 * CIFAR10 dataset
 * Induced stragglers
 * RMS-prop optimizer
-* AMB time limit = 5.5s
-* FMB batchsize = 256
-* See more samples in [`data`](data).
+* Generated with following arguments for `run_eval.py`:
+    * `cifar10 fmb rms 242 --test_size 100 --induce --decay_rate 0.93`
+    * `cifar10 amb rms 356 --amb_time_limit 6.2 --amb_num_splits 16 --test_size 100  --induce --decay_rate 0.93`
 
-<img src="data/600_cifar10_v4/cifar10__set3/all_plots.png?raw=true"/>
+<img src="data/800_cifar10/set2/all_plots.png?raw=true"/>
+
+* See more samples in [`data`](data).
 
 ## Instructions for running on Amazon EC2
 * Create an MPI cluster - [StarCluster](http://star.mit.edu/cluster/docs/latest/installation.html) may be helpful.
@@ -28,7 +30,8 @@ mpiall python -u run_eval.py mnist amb rms 1024 --amb_time_limit 1.9 --amb_num_s
 mpi11 python -u run_eval.py cifar10 amb rms 256 --amb_time_limit 5.5 --amb_num_splits 16 --test_size 100 --induce > $SCRATCH/anytime/output_amb 2>&1
 mpi11 python -u run_eval.py cifar10 fmb rms 256 --test_size 100 --induce > $SCRATCH/anytime/output_fmb 2>&1
 ```
-* Here, `mpi1`, `mpi4` and `mpiall` are aliases. For example `mpi4` translates to `mpirun -host master,node001,node002,node003`. 
+* Here, `mpi1`, `mpi4` and `mpiall` are aliases. For example `mpi4` translates to `mpirun -host master,node001,node002,node003`.
+* If running on Niagara use `srun -n 1` in place of `mpi1`.
 * For CIFAR10 it is important to set a low value for `test_size`. Otherwise master will use all 10,000 samples in the test dataset to evaluate the model. As a result workers will have to wait to send updates to the master. 
 * A sample log line printed by a worker looks like `Sending [256] examples, compute_time [5.63961], last_idle [0.267534], last_send [0.244859]`.
     * `sleep_time`: time spent sleeping in the current step if `induce` is true (inducing stragglers).

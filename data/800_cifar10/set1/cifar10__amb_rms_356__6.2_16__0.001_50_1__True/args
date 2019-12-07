@@ -1,0 +1,39 @@
+{
+    "amb_num_splits": 16,
+    "amb_time_limit": 6.2,
+    "starter_learning_rate": 0.001,
+    "extra": null,
+    "batch_size": 356,
+    "intr_opt": "rms",
+    "no_stats": false,
+    "log_freq": 1,
+    "decay_rate": 1,
+    "test_size": 100,
+    "model": "cifar10",
+    "dist_opt": "amb",
+    "last_step": 1000000,
+    "induce": true,
+    "decay_steps": 50,
+    "dist": [
+        [
+            0,
+            0,
+            0.4
+        ],
+        [
+            0,
+            0.4,
+            0.3
+        ],
+        [
+            2,
+            0.3,
+            0.2
+        ],
+        [
+            5,
+            0.3,
+            0.1
+        ]
+    ]
+}
