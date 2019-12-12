@@ -64,7 +64,7 @@ def main():
 
     # Horovod: initialize Horovod.
     hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist)
-    if hvd.rank()==0:
+    if hvd.is_master():
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
             with open(os.path.join(logs_dir, 'args'), 'w') as fp_:
@@ -72,7 +72,7 @@ def main():
     hvd.set_work_dir(logs_dir)
 
     model = globals()[_a.model]
-    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(_a.batch_size, _a.test_size)
+    placeholders, create_model_get_sum_loss, get_train_fd, get_test_fd = model.get_fac_elements(_a.batch_size, _a.test_size)
 
     global_step = tf.train.get_or_create_global_step()
     learning_rate = tf.compat.v1.train.exponential_decay(_a.starter_learning_rate,
@@ -85,16 +85,16 @@ def main():
     elif _a.intr_opt == 'sgd': opt = tf.train.GradientDescentOptimizer(learning_rate)
 
     # Horovod: add Horovod Distributed Optimizer.
-    if _a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt, _a.batch_size)
-    elif _a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt, _a.batch_size,
-                                                _a.amb_time_limit, _a.amb_num_splits)
+    if _a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt)
+    elif _a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt,
+                                      _a.amb_time_limit, _a.amb_num_splits)
 
-    train_op = dist.minimize(placeholders, model_fac, global_step=global_step)
-    accuracy, avg_loss = model_fac.get_metrics()
+    train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
+    accuracy, avg_loss = create_model_get_sum_loss.get_metrics()
 
-    hooks = [hvd.BroadcastVariablesHook(dist.get_variables(), 0),
-             tf.train.StopAtStepHook(last_step=_a.last_step),]# // hvd.size()),
-    if hvd.rank()==0:
+    hooks = [hvd.BroadcastVariablesHook(dist),
+             tf.train.StopAtStepHook(last_step=_a.last_step)]
+    if hvd.is_master():
         hooks.append(hvd.CSVLoggingHook(every_n_iter=_a.log_freq,
                      train_tensors={'step':global_step, 'loss':avg_loss, 'learning_rate':learning_rate},
                      test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)) # 'accuracy':accuracy

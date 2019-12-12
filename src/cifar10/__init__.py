@@ -188,9 +188,6 @@ def get_fac_elements(batch_size, test_size=-1):
             self.accuracy, sum_loss, self.avg_loss = make_model(feature, target, keep_prob)
             return sum_loss
 
-        def get_var_shapes(self):
-            return [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]]
-
         def get_metrics(self):
             return self.accuracy, self.avg_loss
 

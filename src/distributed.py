@@ -54,7 +54,7 @@ def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging
     log.info('Initialized rank [%d], hostname [%s], host [%s]', rank(), str(hostname), str(host))
 
 
-def local_rank(): return 0
+def is_master(): return MPI_RANK==ROOT_RANK
 def rank(): return MPI_RANK
 def size(): return MPI_SIZE
 def num_workers(): return size()-1
@@ -74,10 +74,10 @@ def broadcast_assign_vars(vars, root_rank):
 
 
 class BroadcastVariablesHook(tf.train.SessionRunHook):
-    def __init__(self, vars, root_rank, device=''):
+    def __init__(self, dist, device=''):
         super().__init__()
-        self.vars = vars
-        self.root_rank = root_rank
+        self.vars = dist.get_variables()
+        self.root_rank = ROOT_RANK
         self.bcast_op = None
         self.device = device
 
@@ -170,8 +170,8 @@ class Distributor:
     def __init__(self, node):
         self._node = node
 
-    def minimize(self, placeholders, model_fac, global_step):
-        self.vars, apply_op = self._node.minimize(placeholders, model_fac, global_step)
+    def minimize(self, placeholders, cr_sum_loss, global_step):
+        self.vars, apply_op = self._node.minimize(placeholders, cr_sum_loss, global_step)
         return apply_op
 
     def get_variables(self):
@@ -184,21 +184,23 @@ class Master:#(tf.train.Optimizer):
         self.work = utils.WorkerProfiler(5, ['rank', 'num_samples', 'compute_time_worker'], WORK_DIR)
         # super().__init__(name=self.__class__.__name__, use_locking=False)
 
-    def minimize(self, placeholders, model_fac, global_step):
-        grads_and_vars = self.compute_gradients(placeholders, model_fac)
+        # placeholders list, create_model_get_sum_loss
+    def minimize(self, placeholders, cr_sum_loss, global_step):
+        shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
+        default_bcast_func(ROOT_RANK, *shapes)   ## send the variable shapes to workers
         _, vars = zip(*grads_and_vars)
         return vars, self.apply_gradients(grads_and_vars, global_step)
 
-    def compute_gradients(self, placeholders, model_fac):
-        grads_and_vars = self._optimizer.compute_gradients(model_fac(*placeholders))
+    def compute_gradients(self, placeholders, cr_sum_loss):
+        grads_and_vars = self._optimizer.compute_gradients(cr_sum_loss(*placeholders))
         if size() > 1:
             grads, vars = zip(*grads_and_vars)
-            shapes, Tout = zip(*[(grad.shape, grad.dtype) for grad in grads])
+            shapes, Tout = zip(*[(grad.shape.as_list(), grad.dtype) for grad in grads])
             self.wgrads = list(np.zeros(ss, dtype=tt.as_numpy_dtype) for ss,tt in zip(shapes,Tout))
             new_grads = tf.py_func(func=self.master_func, inp=[], Tout=Tout)
-            return list(zip(new_grads, vars))
+            return shapes, list(zip(new_grads, vars))
         else:
-            return grads_and_vars
+            return [], grads_and_vars
 
     def apply_gradients(self, grads_and_vars, global_step):
         apply_op = self._optimizer.apply_gradients(grads_and_vars, global_step)
@@ -246,9 +248,8 @@ class Straggler:
 
 
 class Worker:
-    def __init__(self, optimizer, batch_size):
+    def __init__(self, optimizer):
         self._optimizer = optimizer
-        self._batch_size = batch_size
         self.prof = utils.WorkerTag()
         if INDUCE_STRAGGLERS: self.straggler = Straggler(2**10)
         # super().__init__(name=self.__class__.__name__, use_locking=False)
@@ -265,14 +266,17 @@ class Worker:
         last_send = self.prof.get('send')
         compute_time = self.prof.tag('send')
         slp_ = (', sleep_time [%g]'%self.straggler.sleep_time) if INDUCE_STRAGGLERS else ''
-        log.info('Sending [%d] examples%s, compute_time [%g], last_idle [%g], last_send [%g]',\
+        log.debug('Sending [%d] examples%s, compute_time [%g], last_idle [%g], last_send [%g]',\
                   num_samples, slp_, compute_time, self.prof.get('idle'), last_send)
         mpi_reduce_grads(grads, num_samples, compute_time)
         self.prof.tag('idle')
 
-    def minimize(self, placeholders, model_fac, global_step):
+    def minimize(self, placeholders, cr_sum_loss, global_step):
+        shapes = default_bcast_func(ROOT_RANK, None) ## get the variable shapes from master
+        # this is necessary b/c as of now in AMBworker code cr_sum_loss() can only be
+        # executed after knowing the shapes of the accumilating variables
         with ctrl_pyfunc(self.on_new_round_func, [], []):
-            grads_and_vars, num_samples = self.compute_gradients(placeholders, model_fac)
+            grads_and_vars, num_samples = self.compute_gradients(shapes, placeholders, cr_sum_loss)
             grads, vars = zip(*grads_and_vars)
             with ctrl_dep(grads):
                 return vars, self.apply_gradients(grads_and_vars, num_samples, global_step)
@@ -284,8 +288,9 @@ class Worker:
 
 
 class FixedMiniBatchWorker(Worker):
-    def compute_gradients(self, placeholders, model_fac):
-        return self._optimizer.compute_gradients(model_fac(*placeholders)), self._batch_size
+    def compute_gradients(self, _, placeholders, cr_sum_loss):
+        batch_size = tf.shape(placeholders[0])[0]
+        return self._optimizer.compute_gradients(cr_sum_loss(*placeholders)), batch_size
 
 
 class AnytimeMiniBatchWorker(Worker):
@@ -293,10 +298,11 @@ class AnytimeMiniBatchWorker(Worker):
         self._time_limit, self._num_splits = time_limit, num_splits
         return self
 
-    def compute_gradients(self, placeholders, model_fac):
+    def compute_gradients(self, shapes, placeholders, cr_sum_loss):
 
-        time_limit, num_splits, batch_size = self._time_limit, self._num_splits, self._batch_size
-        split_size = int(batch_size/num_splits)
+        time_limit, num_splits = self._time_limit, self._num_splits
+        batch_size = tf.shape(placeholders[0])[0]
+        split_size = tf.dtypes.cast(batch_size/num_splits, tf.int32)
 
         def cond(curr_split, *accs):
             #with log_d('Condition'):
@@ -318,7 +324,7 @@ class AnytimeMiniBatchWorker(Worker):
 
         def body(curr_split, *accs):
             start_, end_ = start_end(curr_split)
-            sum_loss = model_fac(*(pl[start_:end_] for pl in placeholders))
+            sum_loss = cr_sum_loss(*(pl[start_:end_] for pl in placeholders))
             grads_and_vars = self._optimizer.compute_gradients(sum_loss)
             grads, self.vars = zip(*grads_and_vars)
             # print(list(ss.get_shape().as_list() for ss in self.vars))
@@ -327,19 +333,18 @@ class AnytimeMiniBatchWorker(Worker):
             with tf.control_dependencies(ret_accs):
                 return [curr_split+1] + ret_accs
 
-        accs_0 = list(tf.zeros(shape) for shape in model_fac.get_var_shapes())
+        accs_0 = list(tf.zeros(shape) for shape in shapes)
         completed_splits, *grads = tf.while_loop(cond, body, [tf.constant(0)] + accs_0,
                          parallel_iterations=1, return_same_structure=True, swap_memory=True)
         return list(zip(grads, self.vars)), completed_splits*split_size
 
 
 class FixedMiniBatchDistributor(Distributor):
-    def __init__(self, optimizer, batch_size):
-        super().__init__(Master(optimizer) if rank()==0 else
-                         FixedMiniBatchWorker(optimizer, batch_size))
+    def __init__(self, optimizer):
+        super().__init__(Master(optimizer) if rank()==0 else FixedMiniBatchWorker(optimizer))
 
 
 class AnytimeMiniBatchDistributor(Distributor):
-    def __init__(self, optimizer, batch_size, *args, **kwargs):
+    def __init__(self, optimizer, *args, **kwargs):
         super().__init__(Master(optimizer) if rank()==0 else
-                         AnytimeMiniBatchWorker(optimizer, batch_size).init(*args, **kwargs))
+                         AnytimeMiniBatchWorker(optimizer).init(*args, **kwargs))

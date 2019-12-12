@@ -97,9 +97,6 @@ def get_fac_elements(batch_size, test_size=-1):
             self.accuracy, sum_loss, self.avg_loss = conv_model(feature, target)
             return sum_loss
 
-        def get_var_shapes(self):
-            return [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)]
-
         def get_metrics(self):
             return self.accuracy, self.avg_loss
 
