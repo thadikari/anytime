@@ -18,6 +18,8 @@ plt.style.use('classic')
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
 matplotlib.rcParams['font.family'] = 'STIXGeneral'
 matplotlib.rcParams.update({'font.size': 16})
+plt.rc('legend', fontsize=14)    # legend fontsize
+# https://stackoverflow.com/questions/3899980/how-to-change-the-font-size-on-a-matplotlib-plot
 
 
 def proc_csv(file_path):
@@ -98,11 +100,11 @@ def master_stats():
     def plot_(ax_, x_key, y_key, x_label, y_label, filter=0):
         for dir_path, dd in data:
             name = Path(dir_path).name
+            num_ele = int(len(dd[y_key])*_a.fraction)
+            y_val = dd[y_key][:num_ele]
             if filter and _a.filter_sigma:
-                y_val = gaussian_filter1d(dd[y_key], sigma=_a.filter_sigma)
-            else:
-                y_val = dd[y_key]
-            ax_.plot(dd[x_key], y_val, color=get_color(name), label=get_label(name))
+                y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
+            ax_.plot(dd[x_key][:num_ele], y_val, color=get_color(name), label=get_label(name))
         format_ax(ax_, x_label, y_label, leg=1)
         ax_.grid(True, which='both')
         # ax_.set_xscale('log')
@@ -198,6 +200,7 @@ def parse_args():
     parser.add_argument('--filter_sigma', default=0, type=float)
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--silent', action='store_true')
+    parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
     return parser.parse_args()
 
 if __name__ == '__main__':
