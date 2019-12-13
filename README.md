@@ -1,10 +1,36 @@
 # Anytime mini-batch implementation on Tensorflow
 
-### Generating data and plots
-* [`src/run_eval.py`](src/run_eval.py): generates data (see therewithin the applicable arguments).
-* [`src/graph.py`](src/graph.py): plots data (see below for a sample).
+## Tutorial/sample code for using AMB implementation
+* [`src/run_sample_code.py`](src/run_sample_code.py) includes a sample code. See the comments therewithin.
+* Run the code with `mpirun -n 3 python -u run_sample_code.py` (master and two workers).
+* Toggle `is_distributed` boolean to run in distributed or non-distributed manner.
+
+### Package requirments
+* Execute following commands to check the versions of `python`, `numpy`, `mpi4py` and `tensorflow`.
+```
+python --version
+python -c 'import numpy; print(numpy.__version__)'
+python -c 'import mpi4py; print(mpi4py.__version__)'
+python -c 'import tensorflow; print(tensorflow.__version__)'
+```
+* The sample code is tested and works on two systems that have following versions.
+```
+python: 3.7.0
+numpy: 1.16.3
+mpi4py: 3.0.0
+tensorflow: 1.13.1
+```
+```
+python: 3.5.2
+numpy: 1.16.4
+mpi4py: 3.0.2
+tensorflow: 1.14.0
+```
 
 ## Sample comparison of Anytime and Fixed mini-batch (AMB and FMB)
+* In this section
+   * [`src/run_eval.py`](src/run_eval.py): generates data (see therewithin the applicable arguments).
+   * [`src/graph.py`](src/graph.py): plots data (see below for a sample).
 * m3.xlarge instances in Amazon EC2
 * Hub-and-spoke - 10 nodes and master
 * CIFAR10 dataset
