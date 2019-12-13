@@ -1,10 +1,11 @@
 import tensorflow as tf
 import numpy as np
-import distributed as hvd
 
 
-
-# run this sample using `mpirun -n 3 python -u run_sample_code.py`.
+'''
+run this sample using `mpirun -n 3 python -u run_sample_code.py`.
+Most of the code in here is similar to a traditional TF code, except the part highlighted below. 
+'''
 
 
 def create_model_get_sum_loss(feature, target):
@@ -64,7 +65,16 @@ def create_logging_hook():
     log_tn = {'step': global_step, 'loss': create_model_get_sum_loss.avg_loss}
     return tf.train.LoggingTensorHook(tensors=log_tn, every_n_iter=10)
 
+
+############ Begin comparing distributed and non-distributed versions ###############
+'''
+This is the only section that is different from a traditional TF optimization.
+Compare the distributed and non-distributed versions by toggling `is_distributed` boolean.
+'''
+
 if is_distributed:
+
+    import distributed as hvd
     hvd.init()
     # Must call to initialize the mpi4py library.
 
@@ -81,6 +91,8 @@ if is_distributed:
 else:
     train_op = opt.minimize(create_model_get_sum_loss(x,y), global_step=global_step)
     hooks = [create_logging_hook()]
+
+################################# End of comparison #################################
 
 
 with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
