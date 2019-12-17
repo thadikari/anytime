@@ -5,7 +5,7 @@ import time
 import json
 import os
 
-import mnist, cifar10, toy_model
+from models import mnist, cifar10, toy_model
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 
