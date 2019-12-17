@@ -154,16 +154,15 @@ def log_d(fmt, *args):
     op = tf.py_func(func=log.debug, inp=[fmt]+[*args], Tout=[])
     return tf.control_dependencies([op])
 
-def mpi_reduce_grads(grads, num_samples, compute_time):
+def mpi_reduce_grads(grads, meta):
     # https://mpitutorial.com/tutorials/mpi-scatter-gather-and-allgather/
     # https://nyu-cds.github.io/python-mpi/05-collectives/
-    compute_times_ll = comm.gather(compute_time, root=0)
-    num_samples_ll = comm.gather(num_samples, root=0)
+    meta_ll = comm.gather(meta, root=0)
     #total = comm.allreduce(num_samples, op=MPI.SUM)
     for acc in grads:
         # https://nyu-cds.github.io/python-mpi/05-collectives/
         comm.Reduce(acc*(0. if rank()==0 else 1.), acc, op=MPI.SUM, root=0)
-    return compute_times_ll, num_samples_ll
+    return meta_ll
 
 
 class Distributor:
@@ -178,13 +177,13 @@ class Distributor:
         return self.vars
 
 
+log_col_names = ['num_samples', 'last_send', 'last_idle', 'sleep_time', 'compute_time_worker']
+
 class Master:#(tf.train.Optimizer):
     def __init__(self, optimizer):
         self._optimizer = optimizer
-        self.work = utils.WorkerProfiler(5, ['rank', 'num_samples', 'compute_time_worker'], WORK_DIR)
-        # super().__init__(name=self.__class__.__name__, use_locking=False)
+        self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
 
-        # placeholders list, create_model_get_sum_loss
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
         default_bcast_func(ROOT_RANK, *shapes)   ## send the variable shapes to workers
@@ -215,13 +214,14 @@ class Master:#(tf.train.Optimizer):
     def master_func(self):
         log.debug('Listening to [%d] workers', num_workers())
         self.map_grads(np.multiply, 0.)
-        compute_times_ll, num_samples_ll = mpi_reduce_grads(self.wgrads, 0, 0)
-        compute_times_ll, num_samples_ll = compute_times_ll[1:], num_samples_ll[1:]
-        total = sum(num_samples_ll)
+        meta_ll = mpi_reduce_grads(self.wgrads, np.zeros(len(log_col_names)))
+        meta_ll = [arr.tolist() for arr in meta_ll[1:]]
+        total = sum(meta[0] for meta in meta_ll)
         for acc in self.wgrads: np.divide(acc, total, out=acc)
         with self.work as ww:
+            # mpi gather always ensures the rank order??
             for i in range(num_workers()):
-                ww.on_result([i+1, num_samples_ll[i], compute_times_ll[i]])
+                ww.on_result(meta_ll[i])
         return self.wgrads
 
     def map_grads(self, func, arg):
@@ -261,14 +261,28 @@ class Worker:
         self.prof.tag('compute')
         if INDUCE_STRAGGLERS: self.straggler.induce()
 
+    '''
+    worker cycle:
+        send the old grads (last_send)
+        wait till master sends update (last_idle)
+        apply new parameters
+        start the new round after this
+        sleep if inducing stragglers (sleep_time)
+        compute new grads (compute_time also includes sleep_time)
+        send the new grads (the time for this will be sent with the next update)
+    '''
     def dispatch_func(self, num_samples, *grads):
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
+        last_idle = self.prof.get('idle')
+        sleep_time = self.straggler.sleep_time if INDUCE_STRAGGLERS else 0.
         compute_time = self.prof.tag('send')
-        slp_ = (', sleep_time [%g]'%self.straggler.sleep_time) if INDUCE_STRAGGLERS else ''
-        log.debug('Sending [%d] examples%s, compute_time [%g], last_idle [%g], last_send [%g]',\
-                  num_samples, slp_, compute_time, self.prof.get('idle'), last_send)
-        mpi_reduce_grads(grads, num_samples, compute_time)
+        # must send num_samples at the first position!!!!!!!
+        # should be in the same order as log_col_names variable
+        meta = np.array([num_samples, last_send, last_idle, sleep_time, compute_time])
+        meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(log_col_names, meta))
+        log.info(meta_str)
+        mpi_reduce_grads(grads, meta)
         self.prof.tag('idle')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
