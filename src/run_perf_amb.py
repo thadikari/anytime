@@ -8,8 +8,8 @@ import os
 
 
 import distributed as hvd
-import cifar10
-import mnist
+from models import cifar10
+from models import mnist
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
-    parser.add_argument('--data_dir', default='anytime', type=str)
+    parser.add_argument('--data_dir', default='distributed', type=str)
     args = parser.parse_args()
 
     vv = vars(args)
