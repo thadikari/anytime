@@ -8,8 +8,7 @@ import os
 
 
 import distributed as hvd
-from models import cifar10
-from models import mnist
+from models import cifar10, mnist
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
