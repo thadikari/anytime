@@ -298,7 +298,7 @@ class Worker:
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
         with ctrl_pyfunc(self.dispatch_func, inp=[num_samples]+list(grads), Tout=[]):
-            return broadcast_assign_vars(vars, 0)
+            return tf.group(broadcast_assign_vars(vars, 0), tf.assign_add(global_step, 1))
 
 
 class FixedMiniBatchWorker(Worker):

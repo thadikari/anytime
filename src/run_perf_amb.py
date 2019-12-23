@@ -57,17 +57,21 @@ def main():
     SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
     extra_line = '' if _a.extra is None else '__%s'%_a.extra
     amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_splits}' if _a.dist_opt=='amb' else ''
-    run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{_a.starter_learning_rate:g}_{_a.decay_steps}_{_a.decay_rate:g}__{_a.induce}'
-    print('run_id: %s'%run_id)
-    logs_dir = None if _a.no_stats else os.path.join(SCRATCH, _a.data_dir, run_id)
 
     # Horovod: initialize Horovod.
     hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist)
+    num_workers = hvd.num_workers()
+    run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{_a.starter_learning_rate:g}_{_a.decay_steps}_{_a.decay_rate:g}__{_a.induce}_{num_workers}'
+    print('run_id: %s'%run_id)
+    logs_dir = None if _a.no_stats else os.path.join(SCRATCH, _a.data_dir, run_id)
+
     if hvd.is_master():
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
             with open(os.path.join(logs_dir, 'args'), 'w') as fp_:
-                json.dump(vars(_a), fp_, indent=4)
+                ddd = vars(_a)
+                ddd['num_workers'] = num_workers
+                json.dump(ddd, fp_, indent=4)
     hvd.set_work_dir(logs_dir)
 
     model = globals()[_a.model]

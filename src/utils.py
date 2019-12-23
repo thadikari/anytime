@@ -47,10 +47,15 @@ class WorkerProfiler:
         self.cache.append([elapsed_total, self.step_count] + data + [compute_time_master])
 
     def __exit__(self, type, value, traceback):
-        if self.step_count%self.dump_freq==0 and self.csv is not None:
+        if self.step_count%self.dump_freq==0: self.dump_all()
+
+    def dump_all(self):
+        if self.csv is not None:
             for it in self.cache: self.csv.writerow(it)
             self.csv.flush()
             self.reset()
+
+    def __del__(self): self.dump_all()
 
 
 class LoopProfiler:
