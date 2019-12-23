@@ -48,6 +48,23 @@ def get_color(dir_name):
     if '_amb_' in dir_name: return 'b'
 
 
+def scaling_(ax_, data):
+    ll = []
+    labels = ['send', 'idle', 'both']
+    for _, dd, aa in data:
+        send, idle = (np.array(dd[key])[1:] for key in ('last_send', 'last_idle'))
+        both = send + idle
+        avgs = (np.mean(arr) for arr in (send, idle, both))
+        ll.append((aa['num_workers'], *avgs))
+    ll.sort(key=lambda x: x[0])
+    numw, *avgs = zip(*ll)
+    for avg,lab in zip(avgs,labels): ax_.scatter(numw, avg, label=lab)
+    #ax_.fill_between(numw, mn, mx, color='grey', alpha='0.5')
+    format_ax(ax_, 'Number of workers', 'Average worker to master time', leg=1)
+    ax_.grid(True, which='both')
+    ax_.set_xlim([min(numw)-1, max(numw)+1])
+
+
 def worker_stats():
     # paths = list(reversed(list(get_paths(dir_regex))))
     proc_worker = lambda dir_path: proc_csv(os.path.join(dir_path, 'worker_stats.csv'))
@@ -90,6 +107,7 @@ def worker_stats():
                                                             # computing split_size 
                                                             )),
             'cumsum_vs_step':(lambda ax_: cum_(ax_)),
+            'worker_scaling':(lambda ax_: scaling_(ax_, data)),
             }
 
 
@@ -156,6 +174,10 @@ def main():
         ms['loss_vs_time'](plt.subplot(gs[1, 0]))
         plot_name = 'loss'
 
+    elif _a.type==3:
+        worker_stats()['worker_scaling'](plt.gca())
+        plot_name = 'worker_scaling'
+
     elif _a.type==0:
         gs = gridspec.GridSpec(3, 3)
         # if _a.silent: 
@@ -192,7 +214,7 @@ def parse_args():
     parser.add_argument('--dir_name', default='800_cifar10/set2', type=str)
     parser.add_argument('--dir_regex', default='cifar10_*', type=str)
 
-    parser.add_argument('--type', type=int, default=0, choices=[0, 1, 2])
+    parser.add_argument('--type', type=int, default=0, choices=range(4))
     parser.add_argument('--short_label', action='store_true')
     parser.add_argument('--plot', default='loss_vs_step',
                         choices=['loss_vs_step', 'loss_vs_time', 'accuracy_vs_time', 'time_vs_step'])
