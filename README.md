@@ -118,3 +118,7 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
 python -u test_perf_splits.py main --batch_size 64 --num_splits 2 --model mnist
 python -u test_perf_splits.py main --batch_size 64 --num_splits 2 --model cifar10
 ```
+
+### Communication overhead vs. number of workers
+* Modify and run [`test_perf_mpi.sh`](test_perf_mpi.sh) to generate data.
+* Use command `python plot_perf_amb.py --type 3 --dir_name test_perf_mpi/cifar1 --dir_regex c*` to plot the results.
