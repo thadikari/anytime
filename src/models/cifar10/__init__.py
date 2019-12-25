@@ -15,7 +15,7 @@ from tqdm import tqdm
 cifar10_dataset_folder_name = 'cifar-10-batches-py'
 data_directory = os.path.join(os.path.expanduser('~'), '.keras', 'cifar10')
 tp_ = lambda *arg_: os.path.join(data_directory, *arg_)
-
+log = lambda arg: print(arg)
 
 class DownloadProgress(tqdm):
     last_block = 0
@@ -27,24 +27,24 @@ class DownloadProgress(tqdm):
 def display_stats(batch_id, sample_id):
     features, labels = load_raw_batch('data_batch_%d'%batch_id)
     if not (0 <= sample_id < len(features)):
-        print('{} samples in batch {}.  {} is out of range.'.format(len(features), batch_id, sample_id))
+        log('{} samples in batch {}.  {} is out of range.'.format(len(features), batch_id, sample_id))
         return None
 
-    print('\nStats of batch #{}:'.format(batch_id))
-    print('# of Samples: {}\n'.format(len(features)))
+    log('\nStats of batch #{}:'.format(batch_id))
+    log('# of Samples: {}\n'.format(len(features)))
 
     label_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
     label_counts = dict(zip(*np.unique(labels, return_counts=True)))
     for key, value in label_counts.items():
-        print('Label Counts of [{}]({}) : {}'.format(key, label_names[key].upper(), value))
+        log('Label Counts of [{}]({}) : {}'.format(key, label_names[key].upper(), value))
 
     sample_image = features[sample_id]
     sample_label = labels[sample_id]
 
-    print('\nExample of Image {}:'.format(sample_id))
-    print('Image - Min Value: {} Max Value: {}'.format(sample_image.min(), sample_image.max()))
-    print('Image - Shape: {}'.format(sample_image.shape))
-    print('Label - Label Id: {} Name: {}'.format(sample_label, label_names[sample_label]))
+    log('\nExample of Image {}:'.format(sample_id))
+    log('Image - Min Value: {} Max Value: {}'.format(sample_image.min(), sample_image.max()))
+    log('Image - Shape: {}'.format(sample_image.shape))
+    log('Label - Label Id: {} Name: {}'.format(sample_label, label_names[sample_label]))
 
 def normalize(x):
     min_val, max_val = np.min(x), np.max(x)
@@ -64,7 +64,11 @@ def load_raw_batch(file_name):
     return features, labels
 
 def load_preproc_batch(file_name):
-    return pickle.load(open(tp_('preprocessed_%s'%file_name), mode='rb'))
+    file_path = tp_('preprocessed_%s'%file_name)
+    if not isfile(file_path):
+        log('Data file not available: {}'.format(file_path))
+        get_data()
+    return pickle.load(open(file_path, mode='rb'))
 
 def do_all_(file_name):
     features, labels = load_raw_batch(file_name)
@@ -75,13 +79,18 @@ def get_data():
     # Download the dataset (if not exist yet)
     tar_path = tp_('cifar-10-python.tar.gz')
     if not isfile(tar_path):
+        log('CIFAR-10 tar not available: {}'.format(tar_path))
+        if not isdir(data_directory):
+            log('Creating data directory: {}'.format(data_directory))
+            os.makedirs(data_directory)
+        log('Downloading data to: {}'.format(tar_path))
         with DownloadProgress(unit='B', unit_scale=True, miniters=1, desc='CIFAR-10 Dataset') as pbar:
             urlretrieve(
                 'https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz',
                 tar_path,
                 pbar.hook)
 
-    if not isdir(tp_(cifar10_dataset_folder_name)):
+    if 1: #not isdir(tp_(cifar10_dataset_folder_name)):
         with tarfile.open(tar_path) as tar:
             tar.extractall(path=tp_(''))
             tar.close()
@@ -173,7 +182,7 @@ def input_generator(batch_size):
                 end = start+batch_size
                 if end>len(features): continue
                 yield features[start:end], labels[start:end]
-            print('Epoch {:>2}, CIFAR-10 Batch {}:  '.format(epoch + 1, batch_id))
+            log('Epoch {:>2}, CIFAR-10 Batch {}:  '.format(epoch + 1, batch_id))
         epoch += 1
 
 # https://github.com/deep-diver/CIFAR10-img-classification-tensorflow
@@ -208,8 +217,3 @@ def get_fac_elements(batch_size, test_size=-1):
 # accuracy
 # loss = sess.run(cost, feed_dict={x: feature_batch, y: label_batch, keep_prob: 1. })
 # valid_acc = sess.run(accuracy, feed_dict={x: valid_features, y: valid_labels, keep_prob: 1.
-
-
-if __name__ == "__main__":
-    if not os.path.exists(data_directory): os.makedirs(data_directory)
-    get_data()
