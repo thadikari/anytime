@@ -50,11 +50,11 @@ def get_color(dir_name):
 
 def scaling_(ax_, data):
     ll = []
-    labels = ['send', 'idle', 'both']
+    labels = ['send', 'bcast', 'both']
     for _, dd, aa in data:
-        send, idle = (np.array(dd[key])[1:] for key in ('last_send', 'last_idle'))
-        both = send + idle
-        avgs = (np.mean(arr) for arr in (send, idle, both))
+        send, bcast = (np.array(dd[key])[1:] for key in ('last_send', 'last_bcast'))
+        both = send + bcast
+        avgs = (np.mean(arr) for arr in (send, bcast, both))
         ll.append((aa['num_workers'], *avgs))
     ll.sort(key=lambda x: x[0])
     numw, *avgs = zip(*ll)
@@ -101,7 +101,7 @@ def worker_stats():
         format_ax(ax_, x_label, y_label, leg=1)
         ax_.grid(True, which='both')
 
-    return {'hist_compute_time': (lambda ax_: hist_(ax_, 'compute_time_worker', 'Computation time (s)', binwidth=0.1)),
+    return {'hist_compute_time': (lambda ax_: hist_(ax_, 'compute_time', 'Computation time (s)', binwidth=0.1)),
             'hist_batch_size': (lambda ax_: hist_(ax_, 'num_samples', 'Batch size',
                                                    binwidth=lambda aa: aa['batch_size']/aa['amb_num_splits']
                                                             # computing split_size 

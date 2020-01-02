@@ -146,6 +146,12 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
 
 ctrl_dep = tf.control_dependencies
 
+def py_exc(expr):
+    def inner(): expr()
+    # expr is supposed to be a lambda. even though lambda
+    # always returns something, inner returns nothing as expected by tf.py_func.
+    return tf.py_func(func=inner, inp=[], Tout=[])
+
 def ctrl_pyfunc(func, inp, Tout):
     op = tf.py_func(func=func, inp=inp, Tout=Tout)
     return tf.control_dependencies([op])
@@ -177,7 +183,7 @@ class Distributor:
         return self.vars
 
 
-log_col_names = ['num_samples', 'last_send', 'last_idle', 'sleep_time', 'compute_time_worker']
+log_col_names = ['num_samples', 'last_send', 'last_bcast', 'last_exit', 'sleep_time', 'compute_time']
 
 class Master:#(tf.train.Optimizer):
     def __init__(self, optimizer):
@@ -264,7 +270,7 @@ class Worker:
     '''
     worker cycle:
         send the old grads (last_send)
-        wait till master sends update (last_idle)
+        wait till master sends update (last_bcast)
         apply new parameters
         start the new round after this
         sleep if inducing stragglers (sleep_time)
@@ -274,16 +280,17 @@ class Worker:
     def dispatch_func(self, num_samples, *grads):
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
-        last_idle = self.prof.get('idle')
+        last_bcast = self.prof.get('bcast')
+        last_exit = self.prof.get('exit')
         sleep_time = self.straggler.sleep_time if INDUCE_STRAGGLERS else 0.
         compute_time = self.prof.tag('send')
         # must send num_samples at the first position!!!!!!!
         # should be in the same order as log_col_names variable
-        meta = np.array([num_samples, last_send, last_idle, sleep_time, compute_time])
+        meta = np.array([num_samples, last_send, last_bcast, last_exit, sleep_time, compute_time])
         meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(log_col_names, meta))
         log.info(meta_str)
         mpi_reduce_grads(grads, meta)
-        self.prof.tag('idle')
+        self.prof.tag('bcast')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes = default_bcast_func(ROOT_RANK, None) ## get the variable shapes from master
@@ -298,7 +305,8 @@ class Worker:
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
         with ctrl_pyfunc(self.dispatch_func, inp=[num_samples]+list(grads), Tout=[]):
-            return tf.group(broadcast_assign_vars(vars, 0), tf.assign_add(global_step, 1))
+            with ctrl_dep([broadcast_assign_vars(vars, 0), tf.assign_add(global_step, 1)]):
+                return py_exc(lambda:self.prof.tag('exit'))
 
 
 class FixedMiniBatchWorker(Worker):
