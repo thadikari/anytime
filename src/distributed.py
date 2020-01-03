@@ -12,8 +12,6 @@ MPI = None
 comm = None
 log = None
 ROOT_RANK = 0
-MPI_RANK = None
-MPI_SIZE = None
 WORK_DIR = None
 INDUCE_STRAGGLERS = None
 INDUCE_DIST = None
@@ -24,7 +22,7 @@ def set_work_dir(work_dir=None):
 
 def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging.INFO): # INFO DEBUG
 
-    global MPI, comm, log, MPI_RANK, MPI_SIZE, WORK_DIR, INDUCE_STRAGGLERS, INDUCE_DIST
+    global MPI, comm, log, WORK_DIR, INDUCE_STRAGGLERS, INDUCE_DIST
 
     logger = logging.getLogger('dstr') # __name__
     if logger.hasHandlers(): logger.propagate = 0
@@ -44,8 +42,6 @@ def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging
     MPI = MPI_
     comm = MPI.COMM_WORLD
 
-    MPI_RANK = comm.Get_rank()
-    MPI_SIZE = comm.Get_size()
     INDUCE_STRAGGLERS = induce_stragglers
     INDUCE_DIST = induce_dist
     WORK_DIR = work_dir
@@ -54,9 +50,9 @@ def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging
     log.info('Initialized rank [%d], hostname [%s], host [%s]', rank(), str(hostname), str(host))
 
 
-def is_master(): return MPI_RANK==ROOT_RANK
-def rank(): return MPI_RANK
-def size(): return MPI_SIZE
+def is_master(): return rank()==ROOT_RANK
+def rank(): return comm.Get_rank()
+def size(): return comm.Get_size()
 def num_workers(): return size()-1
 
 

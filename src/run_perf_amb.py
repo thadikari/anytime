@@ -14,6 +14,10 @@ tf.logging.set_verbosity(tf.logging.INFO)
 
 
 def parse_args():
+    SCRATCH = os.environ.get('SCRATCH', None)
+    if not SCRATCH: SCRATCH = os.path.join(os.path.expanduser('~'), 'SCRATCH')
+    data_dir = os.path.join(SCRATCH, 'distributed')
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument('model', choices=['mnist', 'cifar10'])
@@ -40,7 +44,7 @@ def parse_args():
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
-    parser.add_argument('--data_dir', default='distributed', type=str)
+    parser.add_argument('--data_dir', default=data_dir, type=str)
     args = parser.parse_args()
 
     vv = vars(args)
@@ -54,7 +58,6 @@ def parse_args():
 
 
 def main():
-    SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
     extra_line = '' if _a.extra is None else '__%s'%_a.extra
     amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_splits}' if _a.dist_opt=='amb' else ''
 
@@ -63,7 +66,7 @@ def main():
     num_workers = hvd.num_workers()
     run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{_a.starter_learning_rate:g}_{_a.decay_steps}_{_a.decay_rate:g}__{_a.induce}_{num_workers}'
     print('run_id: %s'%run_id)
-    logs_dir = None if _a.no_stats else os.path.join(SCRATCH, _a.data_dir, run_id)
+    logs_dir = None if _a.no_stats else os.path.join(_a.data_dir, run_id)
 
     if hvd.is_master():
         if logs_dir is not None:
