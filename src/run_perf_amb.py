@@ -71,7 +71,7 @@ def main():
     if hvd.is_master():
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
-            with open(os.path.join(logs_dir, 'args'), 'w') as fp_:
+            with open(os.path.join(logs_dir, 'args.json'), 'w') as fp_:
                 ddd = vars(_a)
                 ddd['num_workers'] = num_workers
                 json.dump(ddd, fp_, indent=4)
