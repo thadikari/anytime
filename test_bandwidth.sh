@@ -8,13 +8,10 @@ log () { echo "$1"; }
 run () { log ">> $1"; eval "$1"; }
 exc () { run "$EXEC $1 $ARGS2 $2"; }
 
-for len in '100' '10000' '100000' '1000000'; do
-    for bcast in '--no_bcast' ''; do
-        for barr in '--barrier' ''; do
-            for i in 1 2 4 8 16 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 99; do
-                exc $i "$len $barr $bcast";
-                sleep 5s;
-            done
-        done
+for len in 2**10 2**14 2**18 2**20 2**22; do
+    for i in 1 2 4 8 16 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 99; do
+        #echo $((len))
+        exc $i "$((len))";
+        sleep 5s;
     done
 done

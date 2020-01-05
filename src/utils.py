@@ -59,30 +59,37 @@ class WorkerProfiler:
     def __del__(self): self.dump_all()
 
 
+class Timer:
+    def __init__(self): self.updated = None
+    def reset(self): self.updated = time.time()
+    def elapsed(self): return (time.time() - self.updated)*1000
+
+
 class LoopProfiler:
 
     class Tag:
         def __init__(self, name, line, prof):
             self.name, self.line, self.prof = name, line, prof
-
-        def elapsed(self):
-            return (time.time() - self.updated)*1000
+            self.timer = Timer()
 
         def __enter__(self):
-            self.updated = time.time()
+            self.timer.reset()
             extr = '' if self.line is None else ': ' + self.line
             self.prof.debg("(( '"+ self.name +"'" + extr)
             return self
 
         def __exit__(self, type, value, traceback):
-            elapsed = self.elapsed()
+            elapsed = self.timer.elapsed()
             self.prof.debg('    elapsed[%s] ))'%str(int(elapsed)))
-            self.prof.tags[self.name] = self.prof.tags.get(self.name, 0) + elapsed
+            self.prof.update(self.name, elapsed)
+
+    def update(self, name, elapsed):
+        self.tags[name] = self.tags.get(name, 0) + elapsed
 
     def __init__(self, print_info, print_debug, csv, dump_freq):
         self.info = print_info
         self.debg = lambda l_: print_debug(l_) if print_debug else None
-        self.updated = time.time()
+        self.timer = Timer()
         self.dump_freq = dump_freq
         self.tags = collections.OrderedDict()
         self.step_count = 0
@@ -90,19 +97,21 @@ class LoopProfiler:
 
     def __enter__(self):
         self.step_count += 1
+        self.timer.reset()
         return self
 
     def tag(self, name, line=None):
         return LoopProfiler.Tag(name, line, self)
 
     def __exit__(self, type, value, traceback):
+        self.update('TOTAL', self.timer.elapsed())
         if self.step_count%self.dump_freq==0:
             if self.info:
                 summ = ', '.join(["'%s':%d"%(key, int(val)) for key, val in self.tags.items()])
                 self.info('Summary at[%d] for[%d]: ['%(self.step_count, self.dump_freq) + summ + ']')
             if self.csv:
                 keys = self.csv.header if self.csv.header else list(self.tags)
-                vals = [self.tags[key] for key in keys]
+                vals = [self.tags[key] for key in keys + ['TOTAL']]
                 self.csv.writerow(vals)
             for key in self.tags: self.tags[key] = 0
 

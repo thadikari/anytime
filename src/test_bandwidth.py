@@ -23,13 +23,16 @@ def master_to_workers(arr):
 
 
 def main(_a):
+    data = np.random.rand(_a.len_arr)
+
     if rank==0:
         args = vars(_a)
         num_workers = comm.Get_size()-1
         args['num_workers'] = num_workers
+        args['num_bytes'] = data.nbytes
         print('[Arguments]', args)
 
-        run_id = f'bandwidth__{_a.barrier}_{_a.no_bcast}_{_a.len_arr}_{num_workers}'
+        run_id = f'bandwidth__{_a.len_arr}_{num_workers}'
         work_dir = os.path.join(_a.data_dir, run_id)
         if not isdir(work_dir): os.makedirs(work_dir)
         with open(os.path.join(work_dir, 'args.json'), 'w') as fp_:
@@ -40,19 +43,12 @@ def main(_a):
     else:
         prof = utils.LoopProfiler(None, None, None, 1e8)
 
-
-    data = np.random.rand(_a.len_arr)
     for _ in range(_a.num_steps):
         with prof:
             with prof.tag('last_send'):
                 data = workers_to_master(data)
-                if _a.barrier: comm.Barrier()
             with prof.tag('last_bcast'):
-                if not _a.no_bcast:
-                    data = master_to_workers(data)
-                    if _a.barrier: comm.Barrier()
-            # print(rank, data)
-            time.sleep(0.5)
+                data = master_to_workers(data)
 
 
 def parse_args():
@@ -62,8 +58,6 @@ def parse_args():
     
     parser = argparse.ArgumentParser()
     parser.add_argument('len_arr', type=int)
-    parser.add_argument('--no_bcast', action='store_true')
-    parser.add_argument('--barrier', action='store_true')
     parser.add_argument('--num_steps', type=int, default=100)
     parser.add_argument('--dump_freq', type=int, default=1)
     parser.add_argument('--data_dir', type=str, default=data_dir)
