@@ -15,6 +15,7 @@ root = 0
 
 def workers_to_master(arr):
     comm.Reduce(arr+rank, arr, op=MPI.SUM, root=root)
+    #comm.Reduce([arr+rank, MPI.DOUBLE], [arr, MPI.DOUBLE], op=MPI.SUM, root=root)
     return arr
 
 def master_to_workers(arr):
@@ -38,7 +39,8 @@ def main(_a):
         with open(os.path.join(work_dir, 'args.json'), 'w') as fp_:
             json.dump(args, fp_, indent=4)
 
-        csv = utils.CSVFile('worker_stats.csv', work_dir, ['last_send', 'last_bcast'])
+        cols = ['last_send', 'last_bcast'] + LoopProfiler.extra_cols
+        csv = utils.CSVFile('worker_stats.csv', work_dir, cols)
         prof = utils.LoopProfiler(print, None, csv, _a.dump_freq)
     else:
         prof = utils.LoopProfiler(None, None, None, 1e8)
@@ -52,15 +54,11 @@ def main(_a):
 
 
 def parse_args():
-    SCRATCH = os.environ.get('SCRATCH', None)
-    if not SCRATCH: SCRATCH = os.path.join(os.path.expanduser('~'), 'SCRATCH')
-    data_dir = os.path.join(SCRATCH, 'distributed')
-    
     parser = argparse.ArgumentParser()
     parser.add_argument('len_arr', type=int)
     parser.add_argument('--num_steps', type=int, default=100)
     parser.add_argument('--dump_freq', type=int, default=1)
-    parser.add_argument('--data_dir', type=str, default=data_dir)
+    parser.add_argument('--data_dir', type=str, default=utils.resolve_data_dir('distributed'))
     return parser.parse_args()
 
 if __name__ == '__main__':

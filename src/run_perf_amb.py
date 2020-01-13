@@ -1,12 +1,11 @@
 # -*- coding: future_fstrings -*-
 
 import tensorflow as tf
-import numpy as np
 import argparse
 import json
 import os
 
-
+import utils
 import distributed as hvd
 from models import cifar10, mnist
 
@@ -14,10 +13,6 @@ tf.logging.set_verbosity(tf.logging.INFO)
 
 
 def parse_args():
-    SCRATCH = os.environ.get('SCRATCH', None)
-    if not SCRATCH: SCRATCH = os.path.join(os.path.expanduser('~'), 'SCRATCH')
-    data_dir = os.path.join(SCRATCH, 'distributed')
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument('model', choices=['mnist', 'cifar10'])
@@ -44,10 +39,9 @@ def parse_args():
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
-    parser.add_argument('--data_dir', default=data_dir, type=str)
+    parser.add_argument('--data_dir', default=utils.resolve_data_dir('distributed'), type=str)
     args = parser.parse_args()
 
-    vv = vars(args)
     if args.dist_opt=='amb':
         if args.amb_time_limit is None or args.amb_num_splits is None:
             parser.error('Need to define both amb_time_limit and amb_time_splis.')

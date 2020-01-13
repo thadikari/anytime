@@ -4,6 +4,36 @@ import csv
 import os
 
 
+def resolve_data_dir(proj_name):
+    SCRATCH = os.environ.get('SCRATCH', None)
+    if not SCRATCH: SCRATCH = os.path.join(os.path.expanduser('~'), 'SCRATCH')
+    return os.path.join(SCRATCH, proj_name)
+
+
+#https://stackoverflow.com/questions/11367736/matplotlib-consistent-font-using-latex
+def mpl_init(font_size=14, legend_font_size=None):
+    import matplotlib.pyplot as plt
+    from cycler import cycler
+    import matplotlib
+
+    custom_cycler = (cycler(color=['r', 'b', 'g', 'y', 'k']) +
+                     cycler(linestyle=['-', '--', ':', '-.', '-']))
+    plt.rc('axes', prop_cycle=custom_cycler)
+    matplotlib.rcParams['mathtext.fontset'] = 'stix'
+    matplotlib.rcParams['font.family'] = 'STIXGeneral'
+    matplotlib.rcParams.update({'font.size': font_size})
+    if legend_font_size: plt.rc('legend', fontsize=legend_font_size)    # legend fontsize
+    # https://stackoverflow.com/questions/3899980/how-to-change-the-font-size-on-a-matplotlib-plot
+
+
+def fmt_ax(ax, xlab, ylab, leg, grid=1):
+    if leg: ax.legend(loc='best')
+    if xlab: ax.set_xlabel(xlab)
+    if ylab: ax.set_ylabel(ylab)
+    if grid: ax.grid(alpha=0.7, linestyle='-.', linewidth=0.3)
+    ax.tick_params(axis='both', labelsize=12)
+
+
 class CSVFile:
     def __init__(self, file_name, work_dir=None, header=None):
         path = file_name if work_dir is None else os.path.join(work_dir, file_name)
@@ -67,6 +97,8 @@ class Timer:
 
 class LoopProfiler:
 
+    extra_cols = ['TOTAL']
+
     class Tag:
         def __init__(self, name, line, prof):
             self.name, self.line, self.prof = name, line, prof
@@ -111,7 +143,7 @@ class LoopProfiler:
                 self.info('Summary at[%d] for[%d]: ['%(self.step_count, self.dump_freq) + summ + ']')
             if self.csv:
                 keys = self.csv.header if self.csv.header else list(self.tags)
-                vals = [self.tags[key] for key in keys + ['TOTAL']]
+                vals = [self.tags[key] for key in keys]
                 self.csv.writerow(vals)
             for key in self.tags: self.tags[key] = 0
 

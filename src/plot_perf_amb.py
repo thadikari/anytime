@@ -1,26 +1,18 @@
 from scipy.ndimage.filters import gaussian_filter1d
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
+import json, csv, os, argparse
 import scipy.stats as stats
-from cycler import cycler
 from pathlib import Path
 import numpy as np
-import matplotlib
-import argparse
-import json
-import csv
-import os
+
+import utils
 
 
 # print(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 # plt.rc('axes', prop_cycle=cycler(color=['r', 'b', 'g', 'y']))
 plt.style.use('classic')
-matplotlib.rcParams['mathtext.fontset'] = 'stix'
-matplotlib.rcParams['font.family'] = 'STIXGeneral'
-matplotlib.rcParams.update({'font.size': 16})
-plt.rc('legend', fontsize=14)    # legend fontsize
-# https://stackoverflow.com/questions/3899980/how-to-change-the-font-size-on-a-matplotlib-plot
-
+utils.mpl_init(16, 14)
 
 def proc_csv(file_path):
     rdr_ = csv.DictReader(open(str(file_path)))
@@ -28,12 +20,11 @@ def proc_csv(file_path):
     # ppk = lambda:0 # ppk.__dict__ =
     return dict(zip(rdr_.fieldnames, zip(*cols_))) if cols_ else {}
 
-def format_ax(ax_, xlab, ylab, leg=0):
-    ax_.set_xlabel(xlab)
-    ax_.set_ylabel(ylab)
-    ax_.tick_params(axis='x', labelsize=14)
-    ax_.tick_params(axis='y', labelsize=14)
-    if leg: ax_.legend(loc='best')
+proc_master = lambda dir_path: proc_csv(os.path.join(dir_path, 'master_stats.csv'))
+proc_worker = lambda dir_path: proc_csv(os.path.join(dir_path, 'worker_stats.csv'))
+proc_args = lambda dir_path: json.load(open(os.path.join(dir_path, 'args.json')))
+proc_dist = lambda dir_path: proc_args(dir_path)['dist']
+
 
 def get_label(dir_name):
     if _a.short_label:
@@ -48,27 +39,36 @@ def get_color(dir_name):
     if '_amb_' in dir_name: return 'b'
 
 
-def scaling_(ax_, data):
-    ll = []
-    labels = ['send', 'bcast', 'both']
-    for _, dd, aa in data:
-        send, bcast = (np.array(dd[key])[1:] for key in ('last_send', 'last_bcast'))
-        both = send + bcast
-        avgs = (np.mean(arr) for arr in (send, bcast, both))
-        ll.append((aa['num_workers'], *avgs))
-    ll.sort(key=lambda x: x[0])
-    numw, *avgs = zip(*ll)
-    for avg,lab in zip(avgs,labels): ax_.scatter(numw, avg, label=lab)
+def bandwidth_(ax_, data):
+    labels = ['send', 'bcast', 'total', 'both']
+    cols = ('last_send', 'last_bcast', 'TOTAL')
+    def proc_arr(dd):
+        send, bcast, total = (np.array(dd[key]) for key in cols)
+        return (send, bcast, total, send + bcast)
+
+    pt_data = [(aa['num_workers'], proc_arr(dd)) for _, dd, aa in data]
+    pt_data.sort(key=lambda x: x[0])
+    numw, numw_lab_arrs = zip(*pt_data)
+    lab_numw_arrs = list(zip(*numw_lab_arrs))
+    if 0:
+        proc_avg = lambda arrs: list(np.mean(arr) for arr in arrs)
+        for numw_arrs,lab in zip(lab_numw_arrs,labels):
+            ax_.scatter(numw, proc_avg(numw_arrs), label=lab)
+        leg = 1
+    else:
+        proc_avg = lambda arrs: list(np.mean(arr) for arr in arrs)
+        numw_arrs = lab_numw_arrs[-1]
+        for x_,y_ in zip(numw,numw_arrs): plt.scatter([x_] * len(y_), y_, marker='_')
+        leg = 0
+
     #ax_.fill_between(numw, mn, mx, color='grey', alpha='0.5')
-    format_ax(ax_, 'Number of workers', 'Average worker to master time', leg=1)
+    utils.fmt_ax(ax_, 'Number of workers', 'Average worker to master time', leg=leg)
     ax_.grid(True, which='both')
     ax_.set_xlim([min(numw)-1, max(numw)+1])
 
 
 def worker_stats():
     # paths = list(reversed(list(get_paths(dir_regex))))
-    proc_worker = lambda dir_path: proc_csv(os.path.join(dir_path, 'worker_stats.csv'))
-    proc_args = lambda dir_path: json.load(open(os.path.join(dir_path, 'args')))
     data = list(zip(_a.dir_list, map(proc_worker, _a.dir_list), map(proc_args, _a.dir_list)))
 
     def hist_(ax_, key, x_label, binwidth=None):
@@ -88,7 +88,7 @@ def worker_stats():
         # if _a.hist_ylim is not None: ax_.set_ylim([0, _a.hist_ylim])
         ax_.set_ylim([0, ylim])
         ax_.set_yticks([])
-        format_ax(ax_, x_label, 'Frequency', leg=1)
+        utils.fmt_ax(ax_, x_label, 'Frequency', leg=1)
 
     def cum_(ax_):
         x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
@@ -98,7 +98,7 @@ def worker_stats():
             ax_.plot(dd[x_key], np.cumsum(dd[y_key])*mul_, color=get_color(name),
                                                            label=get_label(Path(dir_path).name))
             # print(name, max(dd[x_key]), sum(dd[y_key]), sum(dd[y_key])/max(dd[x_key]))
-        format_ax(ax_, x_label, y_label, leg=1)
+        utils.fmt_ax(ax_, x_label, y_label, leg=1)
         ax_.grid(True, which='both')
 
     return {'hist_compute_time': (lambda ax_: hist_(ax_, 'compute_time', 'Computation time (s)', binwidth=0.1)),
@@ -107,13 +107,12 @@ def worker_stats():
                                                             # computing split_size 
                                                             )),
             'cumsum_vs_step':(lambda ax_: cum_(ax_)),
-            'worker_scaling':(lambda ax_: scaling_(ax_, data)),
+            'master_bandwidth':(lambda ax_: bandwidth_(ax_, data)),
             }
 
 
 def master_stats():
-    proc_stats = lambda dir_path: proc_csv(os.path.join(dir_path, 'master_stats.csv'))
-    data = list(zip(_a.dir_list, map(proc_stats, _a.dir_list)))
+    data = list(zip(_a.dir_list, map(proc_master, _a.dir_list)))
 
     def plot_(ax_, x_key, y_key, x_label, y_label, filter=0):
         for dir_path, dd in data:
@@ -123,7 +122,7 @@ def master_stats():
             if filter and _a.filter_sigma:
                 y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
             ax_.plot(dd[x_key][:num_ele], y_val, color=get_color(name), label=get_label(name))
-        format_ax(ax_, x_label, y_label, leg=1)
+        utils.fmt_ax(ax_, x_label, y_label, leg=1)
         ax_.grid(True, which='both')
         # ax_.set_xscale('log')
 
@@ -140,7 +139,6 @@ def master_stats():
 
 
 def distribution(ax_):
-    proc_dist = lambda dir_path: json.load(open(os.path.join(dir_path, 'args')))['dist']
     data = list(map(proc_dist, _a.dir_list))
     # if not data: return
     dd = data[0]
@@ -152,7 +150,7 @@ def distribution(ax_):
     ax_.set_xlim([0, max(x)])
     # ax_.ylim([0, 0.0015])
     ax_.set_yticks([])
-    format_ax(ax_, 'Induced delay (s)', 'PDF')
+    utils.fmt_ax(ax_, 'Induced delay (s)', 'PDF', 0)
 
 
 def all_plots():
@@ -175,8 +173,8 @@ def main():
         plot_name = 'loss'
 
     elif _a.type==3:
-        worker_stats()['worker_scaling'](plt.gca())
-        plot_name = 'worker_scaling'
+        worker_stats()['master_bandwidth'](plt.gca())
+        plot_name = 'master_bandwidth'
 
     elif _a.type==0:
         gs = gridspec.GridSpec(3, 3)
@@ -210,7 +208,7 @@ def main():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', default='../data', type=str)
+    parser.add_argument('--data_dir', default=os.path.join('..','data'), type=str)
     parser.add_argument('--dir_name', default='800_cifar10/set2', type=str)
     parser.add_argument('--dir_regex', default='cifar10_*', type=str)
 

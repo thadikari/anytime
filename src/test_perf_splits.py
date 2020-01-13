@@ -79,8 +79,7 @@ def main():
 
     elapsed = time.time()-start_t
 
-    SCRATCH = os.environ.get('SCRATCH', '/home/sgeadmin')
-    file_path = os.path.join(SCRATCH, 'data.json')
+    file_path = os.path.join(args.data_dir, 'data.json')
     data = safe_read_json(file_path)
 
     dd = safe_get_key(safe_get_key(data, str(args.batch_size), {}), str(args.num_splits), {})
@@ -135,9 +134,10 @@ def parse_args():
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--num_splits', type=int)
     parser.add_argument('--last_step', type=int, default=10)
+    parser.add_argument('--data_dir', default=utils.resolve_data_dir('distributed'))
     return parser.parse_args()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     args = parse_args()
     print('[Arguments]', vars(args))
     if args.type=='batch': run_batch()
