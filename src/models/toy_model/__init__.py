@@ -59,17 +59,13 @@ def create_data(batch_size):
 def input_generator(batch_size):
     while 1: yield create_data(batch_size)
 
+
+make_model = make_model_conv    # make_model_conv | make_model_fc
 def get_fac_elements(batch_size, test_size=-1):
-
-    make_model = make_model_conv    # make_model_conv | make_model_fc
-
     class ModelFac:
         def __call__(self, feature, target):
             self.accuracy, self.loss = make_model(feature, target)
             return self.loss
-            
-        def get_var_shapes(self):
-            return make_model.shapes
 
         def get_metrics(self):
             return self.accuracy, self.loss

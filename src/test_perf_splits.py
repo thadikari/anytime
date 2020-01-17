@@ -6,6 +6,7 @@ import json
 import os
 
 from models import mnist, cifar10, toy_model
+import utils
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 
@@ -19,14 +20,20 @@ def safe_get_key(dd, key, val):
     if key not in dd: dd[key] = val
     return dd[key]
 
+shapes = {'cifar10': [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]],
+          'mnist': [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)],
+          'toy_model': toy_model.make_model.shapes}
+
 
 # https://stackoverflow.com/questions/49555016/compute-gradients-for-each-time-step-of-tf-while-loop
 # Compute gradient inside tf.while_loop using TensorArray >> https://github.com/tensorflow/tensorflow/issues/9450
 # what parallel_iterations does >> https://github.com/tensorflow/tensorflow/issues/1984
 
+def log_d(fmt, *args):
+    op = tf.py_func(func=print, inp=[fmt]+[*args], Tout=[])
+    return tf.control_dependencies([op])
+
 def main():
-    # batch_size, num_splits = 2**8, 1
-    log_every_n_iter = 1
     batch_size, num_splits = args.batch_size, args.num_splits
     split_size = int(batch_size/num_splits)
 
@@ -61,25 +68,26 @@ def main():
     if num_splits==1:
         loss, grads = get_grads(features_pl, labels_pl)
     else:
-        accs_0 = list(tf.zeros(shape) for shape in model_fac.get_var_shapes())
+        accs_0 = list(tf.zeros(shape) for shape in shapes[args.model])
         _, loss, *grads = tf.while_loop(cond, body, [tf.constant(0), 0.] + accs_0,
-                         parallel_iterations=1, return_same_structure=True,
-                         swap_memory=True)
+                         parallel_iterations=1, return_same_structure=True, swap_memory=True)
 
     global_step = tf.compat.v1.train.get_or_create_global_step()
     grad_vars = zip(grads, vars)
     eval_op = opt.apply_gradients(grad_vars, global_step=global_step)
 
-    hooks = [tf.estimator.LoggingTensorHook(tensors={'loss':loss}, every_n_iter=log_every_n_iter),
+    hooks = [tf.estimator.LoggingTensorHook(tensors={'loss':loss}, every_n_iter=args.log_freq),
              tf.train.StopAtStepHook(last_step=args.last_step)]
-    start_t = time.time()
     with tf.compat.v1.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
+        elapsed = 0.
         while not mon_sess.should_stop():
-            _, loss_ = mon_sess.run([eval_op, loss], feed_dict=get_train_fd())
+            train_fd = get_train_fd()
+            start_t = time.time()
+            _, loss_ = mon_sess.run([eval_op, loss], feed_dict=train_fd)
+            elapsed += time.time()-start_t
 
-    elapsed = time.time()-start_t
 
-    file_path = os.path.join(args.data_dir, 'data.json')
+    file_path = os.path.join(args.data_dir, 'splits.json')
     data = safe_read_json(file_path)
 
     dd = safe_get_key(safe_get_key(data, str(args.batch_size), {}), str(args.num_splits), {})
@@ -105,7 +113,7 @@ def plot():
     from pathlib import Path
 
     file_name = 'ec2-m3-xlarge.json'
-    file_name = 'data.json'
+    file_name = 'splits.json'
     file_path = os.path.join('..', 'data', 'test_slices', file_name)
     data = safe_read_json(file_path)
     ax1, ax2 = plt.subplot(121), plt.subplot(122)
@@ -127,6 +135,7 @@ def plot():
 
     plt.show()
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('type', choices=['batch', 'main', 'plot'])
@@ -134,6 +143,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--num_splits', type=int)
     parser.add_argument('--last_step', type=int, default=10)
+    parser.add_argument('--log_freq', type=int, default=1)
     parser.add_argument('--data_dir', default=utils.resolve_data_dir('distributed'))
     return parser.parse_args()
 
