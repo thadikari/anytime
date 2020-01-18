@@ -110,8 +110,8 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
 * Below is another example for fully connected (top) vs convolutional (bottom) network for a toy dataset. Note that the while loop has a lower impact for convolutional nets. This is because the matrix multiplication in fully connected nets is well supported in modern hardware.
 * See more in [`data/test_perf_splits`](data/test_perf_splits).
 
-<img src="data/test_perf_splits/toy_model_fc_ec2-t2-micro.png?raw=true"/>
-<img src="data/test_perf_splits/toy_model_conv_ec2-t2-micro.png?raw=true"/>
+<img src="data/test_perf_splits/ec2-t2-micro_toy_model_fc.png?raw=true"/>
+<img src="data/test_perf_splits/ec2-t2-micro_toy_model_conv.png?raw=true"/>
 
 * Sample commands:
 ``` shell
