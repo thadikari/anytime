@@ -5,7 +5,7 @@ import time
 import json
 import os
 
-from models import mnist, cifar10, toy_model
+import models
 import utils
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
@@ -22,7 +22,7 @@ def safe_get_key(dd, key, val):
 
 shapes = {'cifar10': [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]],
           'mnist': [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)],
-          'toy_model': toy_model.make_model.shapes}
+          'toy_model': models.reg['toy_model'].make_model.shapes}
 
 
 # https://stackoverflow.com/questions/49555016/compute-gradients-for-each-time-step-of-tf-while-loop
@@ -33,11 +33,11 @@ def log_d(fmt, *args):
     op = tf.py_func(func=print, inp=[fmt]+[*args], Tout=[])
     return tf.control_dependencies([op])
 
-def main():
+def eval():
     batch_size, num_splits = args.batch_size, args.num_splits
     split_size = int(batch_size/num_splits)
 
-    model = globals()[args.model]
+    model = models.reg[args.model]
     placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(batch_size)
     features_pl, labels_pl = placeholders
     opt = tf.train.AdamOptimizer(0.0001)
@@ -103,20 +103,27 @@ def run_batch():
     for i in range(2,20):
         for j in range(i):
             print(2**i,2**j)
-            subprocess.call(['python', '-u', 'test_slices.py', 'main',
-                             '--model', args.model,
-                             '--batch_size', str(2**i),
-                             '--num_splits', str(2**j)])
+            subprocess.call(['python', '-u', 'test_perf_splits.py', 'eval', args.model,
+                             '--batch_size', str(2**i), '--num_splits', str(2**j)])
 
-def plot():
+def plot_all():
+    if args.file_name is None: # scan all .json files in dir
+        for file_name in os.listdir(args.data_dir):
+            if file_name.endswith('.json'): plot(os.path.splitext(file_name)[0])
+    else:
+        plot(args.file_name)
+
+def plot(file_name):
     import matplotlib.pyplot as plt
     from pathlib import Path
 
-    file_name = 'ec2-m3-xlarge.json'
-    file_name = 'splits.json'
-    file_path = os.path.join('..', 'data', 'test_slices', file_name)
-    data = safe_read_json(file_path)
-    ax1, ax2 = plt.subplot(121), plt.subplot(122)
+    # plt.style.use('classic')
+    # utils.mpl_init(modify_cycler=False)
+
+    fpath = lambda ext_: os.path.join(args.data_dir, '%s.%s'%(file_name, ext_))
+    data = safe_read_json(fpath('json'))
+
+    fig, (ax1, ax2) = plt.subplots(1,2, figsize=args.figsize)
     for batch_size in sorted(map(int, list(data.keys()))):
         dd = data[str(batch_size)]
         num_splits_ll = np.array(list(sorted(map(int, list(dd.keys())))))
@@ -127,29 +134,62 @@ def plot():
         ax1.plot(num_splits_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
         ax2.plot(micro_batch_size_ll, time_per_sample_ll, label='Batch size=%d'%batch_size)
 
-    ax1.set_xlabel('Number of splits'); ax1.set_ylabel('Time per step')
-    ax1.set_xscale('log', basex=2); ax1.set_yscale('log'); ax1.legend(loc='best')
+    def fmt_ax(ax_, xl_, yl_):
+        utils.fmt_ax(ax_, xl_, yl_, leg=1)
+        if args.ylim is not None: ax_.set_ylim(args.ylim)
+        ax_.set_xscale('log', basex=2); ax_.set_yscale('log');
 
-    ax2.set_xlabel('Split size'); ax2.set_ylabel('Time per sample')
-    ax2.set_xscale('log', basex=2); ax2.set_yscale('log'); ax2.legend(loc='best')
+    fmt_ax(ax1, 'Number of splits', 'Time per step')
+    fmt_ax(ax2, 'Split size', 'Time per sample')
+    plt.tight_layout()
 
-    plt.show()
+    if args.save:
+        for ext in args.ext:
+            plt.savefig(fpath(ext), bbox_inches='tight')
+    if not args.silent: plt.show()
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('type', choices=['batch', 'main', 'plot'])
-    parser.add_argument('--model', choices=['mnist', 'cifar10', 'toy_model'])
+parsers = {}
+def reg_parser(name, callable):
+    def inner(func):
+        parsers[name] = [func, callable]
+        return func
+    return inner
+
+
+def parse_common(parser):
+    parser.add_argument('--data_dir', default=utils.resolve_data_dir_os('distributed'))
+
+@reg_parser('batch', run_batch)
+def parse_args_batch(parser):
+    parser.add_argument('model', choices=models.reg.keys())
+
+@reg_parser('eval', eval)
+def parse_args_eval(parser):
+    parse_args_batch(parser)
+    parse_common(parser)
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--num_splits', type=int)
     parser.add_argument('--last_step', type=int, default=10)
     parser.add_argument('--log_freq', type=int, default=1)
-    parser.add_argument('--data_dir', default=utils.resolve_data_dir('distributed'))
+
+@reg_parser('plot', plot_all)
+def parse_args_plot(parser):
+    parse_common(parser)
+    parser.add_argument('--save', action='store_true')
+    parser.add_argument('--silent', action='store_true')
+    parser.add_argument('--file_name', default=None, type=str)
+    parser.add_argument('--ylim', default=None, type=float, nargs=2)
+    parser.add_argument('--figsize', default=(14, 8), nargs=2, type=float)
+    parser.add_argument('--ext', default=['pdf'], nargs='+', choices=['pdf', 'png'])
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest='type')
+    for name in parsers: parsers[name][0](subparsers.add_parser(name))
     return parser.parse_args()
 
 if __name__ == '__main__':
     args = parse_args()
     print('[Arguments]', vars(args))
-    if args.type=='batch': run_batch()
-    elif args.type=='main': main()
-    elif args.type=='plot': plot()
+    parsers[args.type][1]()

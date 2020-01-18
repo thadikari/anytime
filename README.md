@@ -58,7 +58,7 @@ mpi11 python -u run_perf_amb.py cifar10 fmb rms 256 --test_size 100 --induce > $
 ```
 * Here, `mpi1`, `mpi4` and `mpiall` are aliases. For example `mpi4` translates to `mpirun -host master,node001,node002,node003`.
 * If running on Niagara use `srun -n 1` in place of `mpi1`.
-* For CIFAR10 it is important to set a low value for `test_size`. Otherwise master will use all 10,000 samples in the test dataset to evaluate the model. As a result workers will have to wait to send updates to the master. 
+* For CIFAR10 it is important to set a low value for `test_size`. Otherwise master will use all 10,000 samples in the test dataset to evaluate the model. As a result workers will have to wait to send updates to the master.
 * A sample log line printed by a worker looks like `Sending [256] examples, compute_time [5.63961], last_idle [0.267534], last_send [0.244859]`.
     * `sleep_time`: time spent sleeping in the current step if `induce` is true (inducing stragglers).
     * `last_send`: in the last step, time spent sending the update to the master.
@@ -96,7 +96,7 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
 ### Effect of splitting minibatches using `tf.while_loop`
 * AMB implementation in this code uses `tf.while_loop` to split minibatches.
 * The input minibatch is split into `amb_num_splits` 'micro' batches, each of size `batch_size/amb_num_splits`. The gradients of splits are then calculated in a loop, starting from the first while the elapsed time>`amb_time_limit`. When the condition fails the worker sends the gradients (summed across the processed splits) to master.
-* The execution speed for `amb_num_splits=10` is lower than that for `amb_num_splits=1` even for the same `batch_size`. Can measure execution speed drop on different platforms (EC2, Compute Canada), NN architectures (fully-connected, convolutional). 
+* The execution speed for `amb_num_splits=10` is lower than that for `amb_num_splits=1` even for the same `batch_size`. Can measure execution speed drop on different platforms (EC2, Compute Canada), NN architectures (fully-connected, convolutional).
 * Following plots are produced using [`test_perf_splits.py`](src/test_perf_splits.py) which includes data generating and plotting commands.
 * The CIFAR10 model used in this code produces following output on EC2.
     * Number of splits: `amb_num_splits`
@@ -105,7 +105,7 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
     * Time per sample: Time per step divided by batch size
 <img src="data/test_perf_splits/cifar10_ec2-m3-xlarge.png?raw=true"/>
 
-* Conclusion: For CIFAR10, if `batch_size` > 512, maintaining a split size > 32 (2^5) will cause a minimal impact on the execution time. 
+* Conclusion: For CIFAR10, if `batch_size` > 512, maintaining a split size > 32 (2^5) will cause a minimal impact on the execution time.
 * This means for `batch_size`=512 set `amb_num_splits`=512/32=16.
 * Below is another example for fully connected (top) vs convolutional (bottom) network for a toy dataset. Note that the while loop has a lower impact for convolutional nets. This is because the matrix multiplication in fully connected nets is well supported in modern hardware.
 * See more in [`data/test_perf_splits`](data/test_perf_splits).
@@ -115,8 +115,10 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
 
 * Sample commands:
 ``` shell
-python -u test_perf_splits.py main --batch_size 64 --num_splits 2 --model mnist
-python -u test_perf_splits.py main --batch_size 64 --num_splits 2 --model cifar10
+python -u test_perf_splits.py eval mnist --batch_size 64 --num_splits 2
+python -u test_perf_splits.py eval cifar10 --batch_size 64 --num_splits 2
+python -u test_perf_splits.py batch toy_model
+python -u test_perf_splits.py plot --save --silent --ext png pdf
 ```
 
 ### Communication overhead vs. number of workers

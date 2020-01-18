@@ -1,5 +1,3 @@
-# -*- coding: future_fstrings -*-
-
 import tensorflow as tf
 import argparse
 import json
@@ -7,7 +5,7 @@ import os
 
 import utils
 import distributed as hvd
-from models import cifar10, mnist
+import models
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -15,7 +13,7 @@ tf.logging.set_verbosity(tf.logging.INFO)
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('model', choices=['mnist', 'cifar10'])
+    parser.add_argument('model', choices=models.reg.keys())
     parser.add_argument('dist_opt', choices=['fmb', 'amb'])
     parser.add_argument('intr_opt', choices=['sgd', 'rms', 'adm'])
     parser.add_argument('batch_size', type=int)
@@ -71,7 +69,7 @@ def main():
                 json.dump(ddd, fp_, indent=4)
     hvd.set_work_dir(logs_dir)
 
-    model = globals()[_a.model]
+    model = models.reg[_a.model]
     placeholders, create_model_get_sum_loss, get_train_fd, get_test_fd = model.get_fac_elements(_a.batch_size, _a.test_size)
 
     global_step = tf.train.get_or_create_global_step()
