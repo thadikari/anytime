@@ -5,7 +5,7 @@
 * Run the code with `mpirun -n 3 python -u run_sample_code.py` (master and two workers).
 * Toggle `is_distributed` boolean to run in distributed or non-distributed manner.
 
-### Package requirments
+### Package requirements
 * Execute following commands to check the versions of `python`, `numpy`, `mpi4py` and `tensorflow`.
 ```
 python --version
