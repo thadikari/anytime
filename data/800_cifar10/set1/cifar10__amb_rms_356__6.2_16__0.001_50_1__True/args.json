@@ -1,5 +1,5 @@
 {
-    "amb_num_splits": 16,
+    "amb_num_partitions": 16,
     "amb_time_limit": 6.2,
     "starter_learning_rate": 0.001,
     "extra": null,

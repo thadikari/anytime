@@ -32,7 +32,7 @@
     "no_stats": false,
     "intr_opt": "rms",
     "decay_rate": 0.93,
-    "amb_num_splits": 16,
+    "amb_num_partitions": 16,
     "data_dir": "anytime",
     "batch_size": 356,
     "last_step": 1000000,

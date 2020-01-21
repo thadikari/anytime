@@ -38,7 +38,7 @@ tensorflow: 1.14.0
 * RMS-prop optimizer
 * Generated with following arguments for `run_perf_amb.py`:
     * `cifar10 fmb rms 242 --test_size 100 --induce --decay_rate 0.93`
-    * `cifar10 amb rms 356 --amb_time_limit 6.2 --amb_num_splits 16 --test_size 100  --induce --decay_rate 0.93`
+    * `cifar10 amb rms 356 --amb_time_limit 6.2 --amb_num_partitions 16 --test_size 100  --induce --decay_rate 0.93`
 
 <img src="data/800_cifar10/set2/all_plots.png?raw=true"/>
 
@@ -49,11 +49,11 @@ tensorflow: 1.14.0
 * Sample commands:
 ``` shell
 mpi1 python -u run_perf_amb.py mnist fmb rms 64
-mpi4 python -u run_perf_amb.py mnist amb adm 64 --amb_time_limit 9.2 --amb_num_splits 64 --starter_learning_rate 0.001
-mpi4 python -u run_perf_amb.py cifar10 amb adm 64 --amb_time_limit 9.2 --amb_num_splits 64 --starter_learning_rate 0.001 --test_size 100
-mpi4 python -u run_perf_amb.py mnist amb rms 4096 --amb_time_limit 9.2 --amb_num_splits 64 --starter_learning_rate 0.001 --induce
-mpiall python -u run_perf_amb.py mnist amb rms 1024 --amb_time_limit 1.9 --amb_num_splits 16
-mpi11 python -u run_perf_amb.py cifar10 amb rms 256 --amb_time_limit 5.5 --amb_num_splits 16 --test_size 100 --induce > $SCRATCH/anytime/output_amb 2>&1
+mpi4 python -u run_perf_amb.py mnist amb adm 64 --amb_time_limit 9.2 --amb_num_partitions 64 --starter_learning_rate 0.001
+mpi4 python -u run_perf_amb.py cifar10 amb adm 64 --amb_time_limit 9.2 --amb_num_partitions 64 --starter_learning_rate 0.001 --test_size 100
+mpi4 python -u run_perf_amb.py mnist amb rms 4096 --amb_time_limit 9.2 --amb_num_partitions 64 --starter_learning_rate 0.001 --induce
+mpiall python -u run_perf_amb.py mnist amb rms 1024 --amb_time_limit 1.9 --amb_num_partitions 16
+mpi11 python -u run_perf_amb.py cifar10 amb rms 256 --amb_time_limit 5.5 --amb_num_partitions 16 --test_size 100 --induce > $SCRATCH/anytime/output_amb 2>&1
 mpi11 python -u run_perf_amb.py cifar10 fmb rms 256 --test_size 100 --induce > $SCRATCH/anytime/output_fmb 2>&1
 ```
 * Here, `mpi1`, `mpi4` and `mpiall` are aliases. For example `mpi4` translates to `mpirun -host master,node001,node002,node003`.
@@ -73,7 +73,7 @@ wk10|Sending [512] examples, compute_time [11.353], last_idle [0.297866], last_s
 wk4|Sending [512] examples, compute_time [11.3975], last_idle [0.278468], last_send [0.255518]
 wk0|step = 9, loss = 4.4926357, learning_rate = 0.001, accuracy = 0.13 (11.885 sec)
 ```
-* `mpi11 python -u run_perf_amb.py cifar10 amb rms 512 --amb_time_limit 11 --amb_num_splits 16 --test_size 100`:
+* `mpi11 python -u run_perf_amb.py cifar10 amb rms 512 --amb_time_limit 11 --amb_num_partitions 16 --test_size 100`:
 ``` shell
 wk8|Sending [512] examples, compute_time [11.485], last_idle [0.765861], last_send [0.25578]
 wk4|Sending [512] examples, compute_time [11.4716], last_idle [0.777958], last_send [0.247732]
@@ -85,7 +85,7 @@ wk4|Sending [256] examples, compute_time [5.64347], last_idle [0.241176], last_s
 wk8|Sending [256] examples, compute_time [5.66594], last_idle [0.258161], last_send [0.421286]
 wk0|step = 109, loss = 2.3923714, learning_rate = 0.001, accuracy = 0.13 (6.153 sec)
 ```
-* `mpi11 python -u run_perf_amb.py cifar10 amb rms 256 --amb_time_limit 5.0 --amb_num_splits 8 --test_size 100`
+* `mpi11 python -u run_perf_amb.py cifar10 amb rms 256 --amb_time_limit 5.0 --amb_num_partitions 8 --test_size 100`
 ```
 wk5|Sending [256] examples, compute_time [5.69975], last_idle [0.257738], last_send [0.347983]
 wk3|Sending [256] examples, compute_time [5.71114], last_idle [0.250323], last_send [0.344623]
@@ -93,34 +93,34 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
 ```
 
 
-### Effect of splitting minibatches using `tf.while_loop`
-* AMB implementation in this code uses `tf.while_loop` to split minibatches.
-* The input minibatch is split into `amb_num_splits` 'micro' batches, each of size `batch_size/amb_num_splits`. The gradients of splits are then calculated in a loop, starting from the first while the elapsed time>`amb_time_limit`. When the condition fails the worker sends the gradients (summed across the processed splits) to master.
-* The execution speed for `amb_num_splits=10` is lower than that for `amb_num_splits=1` even for the same `batch_size`. Can measure execution speed drop on different platforms (EC2, Compute Canada), NN architectures (fully-connected, convolutional).
-* Following plots are produced using [`test_perf_splits.py`](src/test_perf_splits.py) which includes data generating and plotting commands.
+### Effect of partitioning minibatches using `tf.while_loop`
+* AMB implementation in this code uses `tf.while_loop` to partition minibatches.
+* The input minibatch is partitioned into `amb_num_partitions` 'micro' batches, each of size `batch_size/amb_num_partitions`. The gradients of partitions are then calculated in a loop, starting from the first while the elapsed time>`amb_time_limit`. When the condition fails the worker sends the gradients (summed across the processed partitions) to master.
+* The execution speed for `amb_num_partitions=10` is lower than that for `amb_num_partitions=1` even for the same `batch_size`. Can measure execution speed drop on different platforms (EC2, Compute Canada), NN architectures (fully-connected, convolutional).
+* Following plots are produced using [`test_perf_partitions.py`](src/test_perf_partitions.py) which includes data generating and plotting commands.
 * The CIFAR10 model used in this code produces following output on EC2.
-    * Number of splits: `amb_num_splits`
-    * Split size: `batch_size`/`amb_num_splits`
-    * Time per step: Time taken to go through all the splits (covering the whole batch)
+    * Number of partitions: `amb_num_partitions`
+    * Partition size: `batch_size`/`amb_num_partitions`
+    * Time per step: Time taken to go through all the partitions (covering the whole batch)
     * Time per sample: Time per step divided by batch size
-<img src="data/test_perf_splits/cifar10_ec2-m3-xlarge.png?raw=true"/>
+<img src="data/test_perf_partitions/cifar10_ec2-m3-xlarge.png?raw=true"/>
 
-* Conclusion: For CIFAR10, if `batch_size` > 512, maintaining a split size > 32 (2^5) will cause a minimal impact on the execution time.
-* This means for `batch_size`=512 set `amb_num_splits`=512/32=16.
+* Conclusion: For CIFAR10, if `batch_size` > 512, maintaining a partition size > 32 (2^5) will cause a minimal impact on the execution time.
+* This means for `batch_size`=512 set `amb_num_partitions`=512/32=16.
 * Below is another example for fully connected (top) vs convolutional (bottom) network for a toy dataset. Note that the while loop has a lower impact for convolutional nets. This is because the matrix multiplication in fully connected nets is well supported in modern hardware.
-* See more in [`data/test_perf_splits`](data/test_perf_splits).
+* See more in [`data/test_perf_partitions`](data/test_perf_partitions).
 
-<img src="data/test_perf_splits/ec2-t2-micro_toy_model_fc.png?raw=true"/>
-<img src="data/test_perf_splits/ec2-t2-micro_toy_model_conv.png?raw=true"/>
+<img src="data/test_perf_partitions/ec2-t2-micro_toy_model_fc.png?raw=true"/>
+<img src="data/test_perf_partitions/ec2-t2-micro_toy_model_conv.png?raw=true"/>
 
 * Sample commands:
 ``` shell
-python -u test_perf_splits.py eval mnist --batch_size 64 --num_splits 2
-python -u test_perf_splits.py eval cifar10 --batch_size 64 --num_splits 2
-python -u test_perf_splits.py batch toy_model
-python -u test_perf_splits.py plot --save --silent --ext png pdf
+python -u test_perf_partitions.py eval mnist --batch_size 64 --num_partitions 2
+python -u test_perf_partitions.py eval cifar10 --batch_size 64 --num_partitions 2
+python -u test_perf_partitions.py batch toy_model
+python -u test_perf_partitions.py plot --save --silent --ext png pdf
 ```
 
 ### Communication overhead vs. number of workers
 * Modify and run [`test_perf_mpi.sh`](test_perf_mpi.sh) to generate data.
-* Use command `python plot_perf_amb.py --type 3 --dir_name test_perf_mpi/cifar1 --dir_regex c*` to plot the results.
+* Use command `python plot_perf_amb.py --type 3 --dir_name test_bandwidth/4_reduce_arr/bandwidth__1024 --dir_regex b*` to plot the results.

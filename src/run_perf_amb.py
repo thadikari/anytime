@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument('batch_size', type=int)
 
     parser.add_argument('--amb_time_limit', type=float)
-    parser.add_argument('--amb_num_splits', type=int)
+    parser.add_argument('--amb_num_partitions', type=int)
 
     parser.add_argument('--induce', help='induce stragglers', action='store_true')
     parser.add_argument('--dist', default=\
@@ -41,17 +41,17 @@ def parse_args():
     args = parser.parse_args()
 
     if args.dist_opt=='amb':
-        if args.amb_time_limit is None or args.amb_num_splits is None:
+        if args.amb_time_limit is None or args.amb_num_partitions is None:
             parser.error('Need to define both amb_time_limit and amb_time_splis.')
-        if args.amb_num_splits > args.batch_size:
-            parser.error('Case not allowed: args.amb_num_splits > args.batch_sizes')
+        if args.amb_num_partitions > args.batch_size:
+            parser.error('Case not allowed: args.amb_num_partitions > args.batch_sizes')
 
     return args
 
 
 def main():
     extra_line = '' if _a.extra is None else '__%s'%_a.extra
-    amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_splits}' if _a.dist_opt=='amb' else ''
+    amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_partitions}' if _a.dist_opt=='amb' else ''
 
     # Horovod: initialize Horovod.
     hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist)
@@ -85,7 +85,7 @@ def main():
     # Horovod: add Horovod Distributed Optimizer.
     if _a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt)
     elif _a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt,
-                                      _a.amb_time_limit, _a.amb_num_splits)
+                                      _a.amb_time_limit, _a.amb_num_partitions)
 
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
     accuracy, avg_loss = create_model_get_sum_loss.get_metrics()

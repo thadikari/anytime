@@ -67,9 +67,10 @@ def bandwidth_(ax_, data):
     ax_.set_xlim([min(numw)-1, max(numw)+1])
 
 
+worker_data = lambda: list(zip(_a.dir_list, map(proc_worker, _a.dir_list), map(proc_args, _a.dir_list)))
+
 def worker_stats():
-    # paths = list(reversed(list(get_paths(dir_regex))))
-    data = list(zip(_a.dir_list, map(proc_worker, _a.dir_list), map(proc_args, _a.dir_list)))
+    data = worker_data()
 
     def hist_(ax_, key, x_label, binwidth=None):
         ylim = 0
@@ -103,11 +104,10 @@ def worker_stats():
 
     return {'hist_compute_time': (lambda ax_: hist_(ax_, 'compute_time', 'Computation time (s)', binwidth=0.1)),
             'hist_batch_size': (lambda ax_: hist_(ax_, 'num_samples', 'Batch size',
-                                                   binwidth=lambda aa: aa['batch_size']/aa['amb_num_splits']
-                                                            # computing split_size 
+                                                   binwidth=lambda aa: aa['batch_size']/aa['amb_num_partitions']
+                                                            # computing partition_size 
                                                             )),
             'cumsum_vs_step':(lambda ax_: cum_(ax_)),
-            'master_bandwidth':(lambda ax_: bandwidth_(ax_, data)),
             }
 
 
@@ -173,7 +173,7 @@ def main():
         plot_name = 'loss'
 
     elif _a.type==3:
-        worker_stats()['master_bandwidth'](plt.gca())
+        bandwidth_(plt.gca(), worker_data())
         plot_name = 'master_bandwidth'
 
     elif _a.type==0:

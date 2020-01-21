@@ -45,8 +45,8 @@ Otherwise AMB will print the following warning to `tf.logging` interface in runt
 amb_time_limit = 0.10
 # Time limit in seconds
 
-amb_num_splits = 20
-# If `batch_size=99` and `amb_num_splits=9`, AMB will compute 99/9=11 samples at a time till timeout occurs.
+amb_num_partitions = 20
+# If `batch_size=99` and `amb_num_partitions=9`, AMB will compute 99/9=11 samples at a time till timeout occurs.
 
 learning_rate = 0.0001
 is_distributed = True
@@ -78,7 +78,7 @@ if is_distributed:
     hvd.init()
     # Must call to initialize the mpi4py library.
 
-    dist = hvd.AnytimeMiniBatchDistributor(opt, amb_time_limit, amb_num_splits)
+    dist = hvd.AnytimeMiniBatchDistributor(opt, amb_time_limit, amb_num_partitions)
     # Only the master will apply gradients using `GradientDescentOptimizer` logic.
 
     train_op = dist.minimize(placeholders=[x,y], cr_sum_loss=create_model_get_sum_loss, global_step=global_step)

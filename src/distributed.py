@@ -312,49 +312,49 @@ class FixedMiniBatchWorker(Worker):
 
 
 class AnytimeMiniBatchWorker(Worker):
-    def init(self, time_limit, num_splits):
-        self._time_limit, self._num_splits = time_limit, num_splits
+    def init(self, time_limit, num_partitions):
+        self._time_limit, self._num_partitions = time_limit, num_partitions
         return self
 
     def compute_gradients(self, shapes, placeholders, cr_sum_loss):
 
-        time_limit, num_splits = self._time_limit, self._num_splits
+        time_limit, num_partitions = self._time_limit, self._num_partitions
         batch_size = tf.shape(placeholders[0])[0]
-        split_size = tf.dtypes.cast(batch_size/num_splits, tf.int32)
+        partition_size = tf.dtypes.cast(batch_size/num_partitions, tf.int32)
 
-        def cond(curr_split, *accs):
+        def cond(curr_partition, *accs):
             #with log_d('Condition'):
             prnt = lambda: log.warn('Increase batch_size or decrease the amb_time_limit!')
             warn = lambda: tf.py_func(func=prnt, inp=[], Tout=[])
             okay = lambda: tf.no_op()
             chck = lambda: self.elapsed() < time_limit
             # check if already have gone through all the slipts, if this happens then should increase the batch size
-            start_, end_ = start_end(curr_split)
+            start_, end_ = start_end(curr_partition)
             chk1 = tf.shape(placeholders[0][start_:end_])[0] > 0
             chk2 = tf.py_func(func=chck, inp=[], Tout=tf.bool)
             with tf.control_dependencies([tf.cond(chk1, okay, warn)]):
                 return tf.math.logical_and(chk1, chk2)
 
-        def start_end(curr_split):
-            start_ = curr_split*split_size
-            end_ = start_ + split_size
+        def start_end(curr_partition):
+            start_ = curr_partition*partition_size
+            end_ = start_ + partition_size
             return start_, end_
 
-        def body(curr_split, *accs):
-            start_, end_ = start_end(curr_split)
+        def body(curr_partition, *accs):
+            start_, end_ = start_end(curr_partition)
             sum_loss = cr_sum_loss(*(pl[start_:end_] for pl in placeholders))
             grads_and_vars = self._optimizer.compute_gradients(sum_loss)
             grads, self.vars = zip(*grads_and_vars)
             # print(list(ss.get_shape().as_list() for ss in self.vars))
             ret_accs = list(acc+grad for acc,grad in zip(accs, grads))
-            # log_op = tf.py_func(func=log_, inp=[loss, curr_split], Tout=[])
+            # log_op = tf.py_func(func=log_, inp=[loss, curr_partition], Tout=[])
             with tf.control_dependencies(ret_accs):
-                return [curr_split+1] + ret_accs
+                return [curr_partition+1] + ret_accs
 
         accs_0 = list(tf.zeros(shape) for shape in shapes)
-        completed_splits, *grads = tf.while_loop(cond, body, [tf.constant(0)] + accs_0,
+        completed_partitions, *grads = tf.while_loop(cond, body, [tf.constant(0)] + accs_0,
                          parallel_iterations=1, return_same_structure=True, swap_memory=True)
-        return list(zip(grads, self.vars)), completed_splits*split_size
+        return list(zip(grads, self.vars)), completed_partitions*partition_size
 
 
 class FixedMiniBatchDistributor(Distributor):

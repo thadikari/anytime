@@ -34,8 +34,8 @@ def log_d(fmt, *args):
     return tf.control_dependencies([op])
 
 def eval():
-    batch_size, num_splits = args.batch_size, args.num_splits
-    split_size = int(batch_size/num_splits)
+    batch_size, num_partitions = args.batch_size, args.num_partitions
+    partition_size = int(batch_size/num_partitions)
 
     model = models.reg[args.model]
     placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(batch_size)
@@ -45,8 +45,8 @@ def eval():
     global vars
     vars = None
 
-    def cond(curr_split, _, *accs):
-        return curr_split < num_splits
+    def cond(curr_partition, _, *accs):
+        return curr_partition < num_partitions
 
     def get_grads(features, labels):
         global vars
@@ -55,17 +55,17 @@ def eval():
         grads, vars = zip(*gradients)
         return loss, grads
 
-    def body(curr_split, _, *accs):
-        start_ = curr_split*split_size
-        end_ = start_ + split_size
+    def body(curr_partition, _, *accs):
+        start_ = curr_partition*partition_size
+        end_ = start_ + partition_size
         loss, grads = get_grads(features_pl[start_:end_], labels_pl[start_:end_])
         ret_accs = list(acc+grad for acc,grad in zip(accs, grads))
         # a0, g0, r0 = accs[0], grads[0], ret_accs[0]
-        # log_op = tf.py_func(func=log_, inp=[loss, curr_split], Tout=[])
+        # log_op = tf.py_func(func=log_, inp=[loss, curr_partition], Tout=[])
         with tf.control_dependencies(list(grads)):
-            return [curr_split+1, loss] + ret_accs
+            return [curr_partition+1, loss] + ret_accs
 
-    if num_splits==1:
+    if num_partitions==1:
         loss, grads = get_grads(features_pl, labels_pl)
     else:
         accs_0 = list(tf.zeros(shape) for shape in shapes[args.model])
@@ -87,10 +87,10 @@ def eval():
             elapsed += time.time()-start_t
 
 
-    file_path = os.path.join(args.data_dir, 'splits.json')
+    file_path = os.path.join(args.data_dir, 'partitions.json')
     data = safe_read_json(file_path)
 
-    dd = safe_get_key(safe_get_key(data, str(args.batch_size), {}), str(args.num_splits), {})
+    dd = safe_get_key(safe_get_key(data, str(args.batch_size), {}), str(args.num_partitions), {})
     dd['time_per_step'] = elapsed*1.0/args.last_step
     dd['last_loss'] = loss_.item()
 
@@ -103,8 +103,8 @@ def run_batch():
     for i in range(2,20):
         for j in range(i):
             print(2**i,2**j)
-            subprocess.call(['python', '-u', 'test_perf_splits.py', 'eval', args.model,
-                             '--batch_size', str(2**i), '--num_splits', str(2**j)])
+            subprocess.call(['python', '-u', 'test_perf_partitions.py', 'eval', args.model,
+                             '--batch_size', str(2**i), '--num_partitions', str(2**j)])
 
 def plot_all():
     if args.file_name is None: # scan all .json files in dir
@@ -126,12 +126,12 @@ def plot(file_name):
     fig, (ax1, ax2) = plt.subplots(1,2, figsize=args.figsize)
     for batch_size in sorted(map(int, list(data.keys()))):
         dd = data[str(batch_size)]
-        num_splits_ll = np.array(list(sorted(map(int, list(dd.keys())))))
-        time_per_step_ll = np.array(list(dd[str(ns)]['time_per_step'] for ns in num_splits_ll))
+        num_partitions_ll = np.array(list(sorted(map(int, list(dd.keys())))))
+        time_per_step_ll = np.array(list(dd[str(ns)]['time_per_step'] for ns in num_partitions_ll))
         time_per_sample_ll = time_per_step_ll/batch_size
-        micro_batch_size_ll = batch_size/num_splits_ll
-        # ax.plot(num_splits_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
-        ax1.plot(num_splits_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
+        micro_batch_size_ll = batch_size/num_partitions_ll
+        # ax.plot(num_partitions_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
+        ax1.plot(num_partitions_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
         ax2.plot(micro_batch_size_ll, time_per_sample_ll, label='Batch size=%d'%batch_size)
 
     def fmt_ax(ax_, xl_, yl_):
@@ -139,8 +139,8 @@ def plot(file_name):
         if args.ylim is not None: ax_.set_ylim(args.ylim)
         ax_.set_xscale('log', basex=2); ax_.set_yscale('log');
 
-    fmt_ax(ax1, 'Number of splits', 'Time per step')
-    fmt_ax(ax2, 'Split size', 'Time per sample')
+    fmt_ax(ax1, 'Number of partitions', 'Time per step')
+    fmt_ax(ax2, 'Partition size', 'Time per sample')
     plt.tight_layout()
 
     if args.save:
@@ -169,7 +169,7 @@ def parse_args_eval(parser):
     parse_args_batch(parser)
     parse_common(parser)
     parser.add_argument('--batch_size', type=int)
-    parser.add_argument('--num_splits', type=int)
+    parser.add_argument('--num_partitions', type=int)
     parser.add_argument('--last_step', type=int, default=10)
     parser.add_argument('--log_freq', type=int, default=1)
 

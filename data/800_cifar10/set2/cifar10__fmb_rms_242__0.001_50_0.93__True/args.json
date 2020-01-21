@@ -27,7 +27,7 @@
     "log_freq": 1,
     "model": "cifar10",
     "batch_size": 242,
-    "amb_num_splits": 16,
+    "amb_num_partitions": 16,
     "dist_opt": "fmb",
     "decay_steps": 50,
     "starter_learning_rate": 0.001,

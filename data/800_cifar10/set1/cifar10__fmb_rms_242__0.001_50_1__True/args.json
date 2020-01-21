@@ -5,7 +5,7 @@
     "decay_steps": 50,
     "induce": true,
     "starter_learning_rate": 0.001,
-    "amb_num_splits": 16,
+    "amb_num_partitions": 16,
     "no_stats": false,
     "decay_rate": 1,
     "test_size": 100,
