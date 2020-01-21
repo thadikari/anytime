@@ -103,7 +103,7 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
     * Partition size: `batch_size`/`amb_num_partitions`
     * Time per step: Time taken to go through all the partitions (covering the whole batch)
     * Time per sample: Time per step divided by batch size
-<img src="data/test_perf_partitions/cifar10_ec2-m3-xlarge.png?raw=true"/>
+<img src="data/test_perf_partitions/ec2-m3-xlarge_cifar10.png?raw=true"/>
 
 * Conclusion: For CIFAR10, if `batch_size` > 512, maintaining a partition size > 32 (2^5) will cause a minimal impact on the execution time.
 * This means for `batch_size`=512 set `amb_num_partitions`=512/32=16.
