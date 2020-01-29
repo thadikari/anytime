@@ -21,6 +21,7 @@ def safe_get_key(dd, key, val):
     return dd[key]
 
 shapes = {'cifar10': [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]],
+          'alexnet': [[11, 11, 3, 96], [5, 5, 48, 256], [3, 3, 256, 384], [3, 3, 192, 384], [3, 3, 192, 256], [135424, 4096], [4096, 4096], [4096, 1000], [96], [256], [384], [384], [256], [4096], [4096], [1000]],
           'mnist': [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)],
           'toy_model': models.reg['toy_model'].make_model.shapes}
 
@@ -53,6 +54,7 @@ def eval():
         loss = model_fac(features, labels)
         gradients = opt.compute_gradients(loss)
         grads, vars = zip(*gradients)
+        # print(*[(gg, vv) for gg,vv in gradients], sep='\n\n')
         return loss, grads
 
     def body(curr_partition, _, *accs):
@@ -100,7 +102,7 @@ def eval():
 
 def run_batch():
     import subprocess
-    for i in range(2,20):
+    for i in range(2,18):
         for j in range(i):
             print(2**i,2**j)
             subprocess.call(['python', '-u', 'test_perf_partitions.py', 'eval', args.model,
