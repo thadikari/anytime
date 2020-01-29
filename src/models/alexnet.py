@@ -14,10 +14,10 @@ dataset_dict = {
 # Filter shapes for each layer
 conv_filter_shapes = {
     "c1_filter": [11, 11, 3, 96],
-    "c2_filter": [5, 5, 48, 256],
+    "c2_filter": [5, 5, 96, 256],
     "c3_filter": [3, 3, 256, 384],
-    "c4_filter": [3, 3, 192, 384],
-    "c5_filter": [3, 3, 192, 256]
+    "c4_filter": [3, 3, 384, 256],
+    "c5_filter": [3, 3, 256, 256]
 }
 
 # Fully connected shapes
