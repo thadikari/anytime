@@ -109,6 +109,7 @@ def run_batch():
                              '--batch_size', str(2**i), '--num_partitions', str(2**j)])
 
 def plot_all():
+    utils.mpl_init()
     if args.file_name is None: # scan all .json files in dir
         for file_name in os.listdir(args.data_dir):
             if file_name.endswith('.json'): plot(os.path.splitext(file_name)[0])
