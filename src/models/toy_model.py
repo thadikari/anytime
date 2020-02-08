@@ -1,6 +1,8 @@
 import tensorflow as tf
 import numpy as np
 
+from . import registry
+
 
 layers = tf.layers
 
@@ -60,11 +62,11 @@ def input_generator(batch_size):
     while 1: yield create_data(batch_size)
 
 
-make_model = make_model_conv    # make_model_conv | make_model_fc
+@registry.register('toy_model')
 def get_fac_elements(batch_size, test_size=-1):
     class ModelFac:
         def __call__(self, feature, target):
-            self.accuracy, self.loss = make_model(feature, target)
+            self.accuracy, self.loss = get_fac_elements.make_model(feature, target)
             return self.loss
 
         def get_metrics(self):
@@ -78,3 +80,5 @@ def get_fac_elements(batch_size, test_size=-1):
     def get_train_fd():
         return dict(zip([image, label], next(generator)))
     return placeholders, ModelFac(), get_train_fd, lambda: {image:x_test, label:y_test}
+
+get_fac_elements.make_model = make_model_conv    # make_model_conv | make_model_fc

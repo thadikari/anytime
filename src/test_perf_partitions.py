@@ -39,7 +39,7 @@ def eval():
     partition_size = int(batch_size/num_partitions)
 
     model = models.reg[args.model]
-    placeholders, model_fac, get_train_fd, get_test_fd = model.get_fac_elements(batch_size)
+    placeholders, model_fac, get_train_fd, get_test_fd = model(batch_size)
     features_pl, labels_pl = placeholders
     opt = tf.train.AdamOptimizer(0.0001)
 

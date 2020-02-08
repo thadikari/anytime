@@ -1,8 +1,8 @@
 import tensorflow as tf
 import numpy as np
 
+from . import registry
 
-layers = tf.layers
 
 MOMENTUM = 0.9
 WEIGHT_DECAY = 0.0005
@@ -18,6 +18,7 @@ def make_model(feature, target):
     # https://github.com/gholomia/AlexNet-Tensorflow/blob/master/src/alexnet.py
     # https://www.learnopencv.com/wp-content/uploads/2018/05/AlexNet-1.png
 
+    layers = tf.layers
     vv = lambda shape: tf.Variable(lambda: tf.truncated_normal(shape=shape, mean=0, stddev=0.08))
 
     # Convolution Layer 1 | Response Normalization | Max Pooling | ReLU
@@ -83,6 +84,7 @@ def input_generator(batch_size):
     while 1: yield create_data(batch_size)
 
 
+@registry.register('alexnet')
 def get_fac_elements(batch_size, test_size=-1):
     class ModelFac:
         def __call__(self, feature, target):

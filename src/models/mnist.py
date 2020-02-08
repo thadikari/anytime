@@ -2,11 +2,11 @@ import tensorflow as tf
 import numpy as np
 
 from . import data_utils as du
+from . import registry
 
-
-layers = tf.layers
 
 def conv_model(feature):
+    layers = tf.layers
     # Reshape feature to 4d tensor with 2nd and 3rd dimensions being
     # image width and height final dimension being the number of color channels.
     feature = tf.reshape(feature, [-1, 28, 28, 1])
@@ -36,7 +36,7 @@ def conv_model(feature):
     return logits
 
 
-def get_fac_elements_outer(module_name):
+def get_fac_elements_outer(dataset_name):
     def get_fac_elements_inner(batch_size, test_size=-1):
 
         class ModelFac:
@@ -50,7 +50,7 @@ def get_fac_elements_outer(module_name):
         placeholders = tf.placeholder(tf.float32, [None, 28, 28], name='image'),\
                        tf.placeholder(tf.float32, [None], name='label')
         image, label = placeholders
-        (x_train, y_train), (x_test, y_test) = du.get_dataset(module_name)
+        (x_train, y_train), (x_test, y_test) = du.get_dataset(dataset_name)
 
         generator = du.input_generator(x_train, y_train, batch_size)
         if test_size>=0:
@@ -62,8 +62,6 @@ def get_fac_elements_outer(module_name):
     return get_fac_elements_inner
 
 
-module_mnist = lambda:None
-module_mnist.get_fac_elements = get_fac_elements_outer('mnist')
-
-module_fashion_mnist = lambda:None
-module_fashion_mnist.get_fac_elements = get_fac_elements_outer('fashion_mnist')
+register = lambda name: registry.register(name)(get_fac_elements_outer(name))
+register('fashion_mnist')
+register('mnist')

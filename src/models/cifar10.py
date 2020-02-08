@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 from . import data_utils as du
+from . import registry
 
 
 def conv_net(x, keep_prob):
@@ -60,6 +61,7 @@ def conv_net(x, keep_prob):
     return tf.contrib.layers.fully_connected(inputs=full3, num_outputs=10, activation_fn=None)
 
 
+@registry.register('cifar10')
 def get_fac_elements(batch_size, test_size=-1):
 
     x = tf.placeholder(tf.float32, shape=(None, 32, 32, 3), name='input_x')
