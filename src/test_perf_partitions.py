@@ -109,7 +109,7 @@ def run_batch():
                              '--batch_size', str(2**i), '--num_partitions', str(2**j)])
 
 def plot_all():
-    utils.mpl_init()
+    utils.mpl_init(20, legend_font_size=18, tick_size=18)
     if args.file_name is None: # scan all .json files in dir
         for file_name in os.listdir(args.data_dir):
             if file_name.endswith('.json'): plot(os.path.splitext(file_name)[0])
@@ -134,16 +134,16 @@ def plot(file_name):
         time_per_sample_ll = time_per_step_ll/batch_size
         micro_batch_size_ll = batch_size/num_partitions_ll
         # ax.plot(num_partitions_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
-        ax1.plot(num_partitions_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
-        ax2.plot(micro_batch_size_ll, time_per_sample_ll, label='Batch size=%d'%batch_size)
+        ax1.plot(num_partitions_ll, time_per_step_ll, label='$N$=%d'%batch_size)
+        ax2.plot(micro_batch_size_ll, time_per_sample_ll, label='$N$=%d'%batch_size)
 
     def fmt_ax(ax_, xl_, yl_):
         utils.fmt_ax(ax_, xl_, yl_, leg=1)
         if args.ylim is not None: ax_.set_ylim(args.ylim)
         ax_.set_xscale('log', basex=2); ax_.set_yscale('log');
 
-    fmt_ax(ax1, 'Number of partitions', 'Time per step')
-    fmt_ax(ax2, 'Partition size', 'Time per sample')
+    fmt_ax(ax1, 'Number of partitions $P$', 'Time per step')
+    fmt_ax(ax2, 'Partition size $N/P$', 'Time per sample')
     plt.tight_layout()
 
     if args.save:

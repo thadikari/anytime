@@ -12,7 +12,7 @@ import utils
 # print(plt.rcParams['axes.prop_cycle'].by_key()['color'])
 # plt.rc('axes', prop_cycle=cycler(color=['r', 'b', 'g', 'y']))
 plt.style.use('classic')
-utils.mpl_init(16, 14)
+utils.mpl_init(20, legend_font_size=18, tick_size=16)
 
 def proc_csv(file_path):
     rdr_ = csv.DictReader(open(str(file_path)))
@@ -96,7 +96,10 @@ def worker_stats():
         for dir_path, dd, aa in data:
             mul_ = 1#aa['batch_size']
             name = Path(dir_path).name
-            ax_.plot(dd[x_key], np.cumsum(dd[y_key])*mul_, color=get_color(name),
+            y_val = dd[y_key]
+            num_ele = int(len(y_val)*_a.fraction)
+            y_val = y_val[:num_ele]
+            ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_, color=get_color(name),
                                                            label=get_label(Path(dir_path).name))
             # print(name, max(dd[x_key]), sum(dd[y_key]), sum(dd[y_key])/max(dd[x_key]))
         utils.fmt_ax(ax_, x_label, y_label, leg=1)
