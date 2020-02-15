@@ -9,15 +9,14 @@ import numpy as np
 import utils
 
 
-# print(plt.rcParams['axes.prop_cycle'].by_key()['color'])
-# plt.rc('axes', prop_cycle=cycler(color=['r', 'b', 'g', 'y']))
+#from matplotlib import ticker
+#ax_.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x,_: '{:,g}'.format(x/10**6) + 'M'))
 plt.style.use('classic')
 utils.mpl_init(20, legend_font_size=18, tick_size=16)
 
 def proc_csv(file_path):
     rdr_ = csv.DictReader(open(str(file_path)))
     cols_ = list([float(row[fn_]) for fn_ in rdr_.fieldnames] for row in rdr_)
-    # ppk = lambda:0 # ppk.__dict__ =
     return dict(zip(rdr_.fieldnames, zip(*cols_))) if cols_ else {}
 
 proc_master = lambda dir_path: proc_csv(os.path.join(dir_path, 'master_stats.csv'))
@@ -25,6 +24,24 @@ proc_worker = lambda dir_path: proc_csv(os.path.join(dir_path, 'worker_stats.csv
 proc_args = lambda dir_path: json.load(open(os.path.join(dir_path, 'args.json')))
 proc_dist = lambda dir_path: proc_args(dir_path)['dist']
 
+class DataRoot:
+    def __init__(self, dir_list):
+        self.__wd, self.__md = None, None
+        self.dir_list = dir_list
+
+    def worker_data(self):
+        if self.__wd is None:
+            self.__wd = list(zip(self.dir_list, map(proc_worker, self.dir_list),
+                                   map(proc_args, self.dir_list)))
+        return self.__wd
+
+    def master_data(self):
+        if self.__md is None:
+            self.__md = list(zip(self.dir_list, map(proc_master, self.dir_list)))
+        return self.__md
+
+    def distribution(self):
+        return list(map(proc_dist, self.dir_list))
 
 def get_label(dir_name):
     if _a.short_label:
@@ -34,19 +51,25 @@ def get_label(dir_name):
         return dir_name
 
 def get_color(dir_name):
-    # return None
     if '_fmb_' in dir_name: return 'r'
     if '_amb_' in dir_name: return 'b'
 
 
-def bandwidth_(ax_, data):
+
+plt_ax = utils.Registry()
+
+#########################
+# plots using worker_data
+#########################
+
+def bandwidth_(root, ax_):
     labels = ['send', 'bcast', 'total', 'both']
     cols = ('last_send', 'last_bcast', 'TOTAL')
     def proc_arr(dd):
         send, bcast, total = (np.array(dd[key]) for key in cols)
         return (send, bcast, total, send + bcast)
 
-    pt_data = [(aa['num_workers'], proc_arr(dd)) for _, dd, aa in data]
+    pt_data = [(aa['num_workers'], proc_arr(dd)) for _, dd, aa in root.worker_data()]
     pt_data.sort(key=lambda x: x[0])
     numw, numw_lab_arrs = zip(*pt_data)
     lab_numw_arrs = list(zip(*numw_lab_arrs))
@@ -66,164 +89,163 @@ def bandwidth_(ax_, data):
     ax_.grid(True, which='both')
     ax_.set_xlim([min(numw)-1, max(numw)+1])
 
+def hist_(root, ax_, key, x_label, binwidth=None):
+    ylim = 0
+    for dir_path, dd, aa in root.worker_data():
+        col = dd.get(key, [])
+        if col:
+            arr = np.array(col)
+            if callable(binwidth): binwidth = binwidth(aa)
+            bins = np.arange(min(arr), max(arr) + binwidth, binwidth)
+            if (len(bins))==1: bins = [bins[0]-binwidth, bins[0]]
 
-worker_data = lambda: list(zip(_a.dir_list, map(proc_worker, _a.dir_list), map(proc_args, _a.dir_list)))
-
-def worker_stats():
-    data = worker_data()
-
-    def hist_(ax_, key, x_label, binwidth=None):
-        ylim = 0
-        for dir_path, dd, aa in data:
-            col = dd.get(key, [])
-            if col:
-                arr = np.array(col)
-                if callable(binwidth): binwidth = binwidth(aa)
-                bins = np.arange(min(arr), max(arr) + binwidth, binwidth)
-                if (len(bins))==1: bins = [bins[0]-binwidth, bins[0]]
-
-                name = Path(dir_path).name
-                n, bins, patches = ax_.hist(arr, bins=bins, alpha=.5, color=get_color(name), label=get_label(Path(dir_path).name))
-                if len(bins)>5: ylim = max(ylim, max(n))
-        # ax_.set_xlim([10, 18])
-        # if _a.hist_ylim is not None: ax_.set_ylim([0, _a.hist_ylim])
-        ax_.set_ylim([0, ylim])
-        ax_.set_yticks([])
-        utils.fmt_ax(ax_, x_label, 'Frequency', leg=1)
-
-    def cum_(ax_):
-        x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
-        for dir_path, dd, aa in data:
-            mul_ = 1#aa['batch_size']
             name = Path(dir_path).name
-            y_val = dd[y_key]
-            num_ele = int(len(y_val)*_a.fraction)
-            y_val = y_val[:num_ele]
-            ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_, color=get_color(name),
-                                                           label=get_label(Path(dir_path).name))
-            # print(name, max(dd[x_key]), sum(dd[y_key]), sum(dd[y_key])/max(dd[x_key]))
-        utils.fmt_ax(ax_, x_label, y_label, leg=1)
-        ax_.grid(True, which='both')
+            n, bins, patches = ax_.hist(arr, bins=bins, alpha=.5, color=get_color(name), label=get_label(Path(dir_path).name))
+            if len(bins)>5: ylim = max(ylim, max(n))
+    ax_.set_ylim([0, ylim])
+    ax_.set_yticks([])
+    utils.fmt_ax(ax_, x_label, 'Frequency', leg=1)
 
-    return {'hist_compute_time': (lambda ax_: hist_(ax_, 'compute_time', 'Computation time (s)', binwidth=0.1)),
-            'hist_batch_size': (lambda ax_: hist_(ax_, 'num_samples', 'Batch size',
-                                                   binwidth=lambda aa: aa['batch_size']/aa['amb_num_partitions']
-                                                            # computing partition_size 
-                                                            )),
-            'cumsum_vs_step':(lambda ax_: cum_(ax_)),
-            }
-
-
-def master_stats():
-    data = list(zip(_a.dir_list, map(proc_master, _a.dir_list)))
-
-    def plot_(ax_, x_key, y_key, x_label, y_label, filter=0):
-        for dir_path, dd in data:
-            name = Path(dir_path).name
-            num_ele = int(len(dd[y_key])*_a.fraction)
-            y_val = dd[y_key][:num_ele]
-            if filter and _a.filter_sigma:
-                y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
-            ax_.plot(dd[x_key][:num_ele], y_val, color=get_color(name), label=get_label(name))
-        utils.fmt_ax(ax_, x_label, y_label, leg=1)
-        ax_.grid(True, which='both')
-        # ax_.set_xscale('log')
-
-        # ax_.xlim([0, lim])
-        # ax_.ylim([2, 3.5])
-        # ax_.plot(time, dd.step)
-
-    return {'loss_vs_time':(lambda ax_: plot_(ax_, 'time', 'loss', 'Wall clock time (s)', 'Training loss', True)),
-            'accuracy_vs_time':(lambda ax_: plot_(ax_, 'time', 'accuracy', 'Wall clock time (s)', 'Test accuracy', True)),
-            'loss_vs_step':(lambda ax_: plot_(ax_, 'step', 'loss', 'Step', 'Training loss', True)),
-            'time_vs_step':(lambda ax_: plot_(ax_, 'step', 'time', 'Step', 'Wall clock time (s)')),
-            'learning_rate_vs_step':(lambda ax_: plot_(ax_, 'step', 'learning_rate', 'Step', 'Learning rate')),
-            }
+def cum_(root, ax_):
+    ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+    x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
+    for dir_path, dd, aa in root.worker_data():
+        mul_ = 1  # aa['batch_size']
+        name = Path(dir_path).name
+        y_val = dd[y_key]
+        num_ele = int(len(y_val)*_a.fraction)
+        y_val = y_val[:num_ele]
+        ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_, color=get_color(name),
+                               linewidth=1.5, label=get_label(Path(dir_path).name))
+    utils.fmt_ax(ax_, x_label, y_label, leg=1)
+    ax_.grid(True, which='both')
 
 
-def distribution(ax_):
-    data = list(map(proc_dist, _a.dir_list))
-    # if not data: return
-    dd = data[0]
+@plt_ax.reg
+def hist_compute_time(*args):
+    return hist_(*args, 'compute_time', 'Computation time (s)', binwidth=0.1)
+
+@plt_ax.reg
+def hist_batch_size(*args):
+    return hist_(*args, 'num_samples', 'Batch size',
+             binwidth=lambda aa: aa['batch_size']/aa['amb_num_partitions'])
+
+@plt_ax.reg
+def cumsum_vs_step(*args):
+    return cum_(*args)
+
+
+#########################
+# plots using master_data
+#########################
+
+def plot_(root, ax_, x_key, y_key, x_label, y_label, filter=0, ysci=False):
+    if ysci: ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+    for dir_path, dd in root.master_data():
+        name = Path(dir_path).name
+        num_ele = int(len(dd[y_key])*_a.fraction)
+        y_val = dd[y_key][:num_ele]
+        if filter and _a.filter_sigma:
+            y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
+        ax_.plot(dd[x_key][:num_ele], y_val, color=get_color(name), 
+                                linewidth=1.5, label=get_label(name))
+    utils.fmt_ax(ax_, x_label, y_label, leg=1)
+    ax_.grid(True, which='both')
+
+@plt_ax.reg
+def loss_vs_time(*args):
+    return plot_(*args, 'time', 'loss', 'Wall clock time (s)', 'Training loss', True)
+
+@plt_ax.reg
+def accuracy_vs_time(*args):
+    return plot_(*args, 'time', 'accuracy', 'Wall clock time (s)', 'Test accuracy', True)
+
+@plt_ax.reg
+def loss_vs_step(*args):
+    return plot_(*args, 'step', 'loss', 'Step', 'Training loss', True)
+
+@plt_ax.reg
+def time_vs_step(*args):
+    return plot_(*args, 'step', 'time', 'Step', 'Wall clock time (s)', ysci=True)
+
+@plt_ax.reg
+def learning_rate_vs_step(*args):
+    return plot_(*args, 'step', 'learning_rate', 'Step', 'Learning rate', ysci=True)
+
+@plt_ax.reg
+def distribution(root, ax_):
+    dd = root.distribution()[0]
     means, std_devs, weights = zip(*dd)
     y_ = lambda x_: sum(w*stats.norm.pdf(x_, mu, sigma) for mu, sigma, w in dd if sigma!=0)
     x = np.linspace(1e-3, 8, 500)
-    y = y_(x) + y_(-x) # take absolute values for negative values
-    ax_.fill_between(x, 0, y)#, label='Expected value ~=%g'%(x@y/sum(y)))
+    y = y_(x) + y_(-x)          # take absolute values for negative values
+    ax_.fill_between(x, 0, y)   # label='Expected value ~=%g'%(x@y/sum(y)))
     ax_.set_xlim([0, max(x)])
     # ax_.ylim([0, 0.0015])
     ax_.set_yticks([])
     utils.fmt_ax(ax_, 'Induced delay (s)', 'PDF', 0)
 
 
-def all_plots():
-    ws, ms = worker_stats(), master_stats()
-    all = {**ws, **ms}
-    all['distribution'] = distribution
-    return all
+#########################
+# multiple plts on figure
+#########################
+
+plt_fig = utils.Registry()
+
+
+def single_plot(plt_ax_handle):
+    def inner(root, sv_):
+        plt_ax_handle(root, plt.gca())
+        sv_()
+    return inner
+for name_,hdl_ in plt_ax.items(): plt_fig.put(name_, single_plot(hdl_))
+
+@plt_fig.reg
+def loss(root, sv_):
+    gs = gridspec.GridSpec(2, 1)
+    loss_vs_step(root, plt.subplot(gs[0, 0]))
+    loss_vs_time(root, plt.subplot(gs[1, 0]))
+    sv_()
+
+@plt_fig.reg
+def master_bandwidth(root, sv_):
+    bandwidth_(root, plt.gca())
+    sv_()
+
+@plt_fig.reg
+def all_plots(root, sv_):
+    gs = gridspec.GridSpec(3, 3)
+    plt.figure(figsize=(25,15))
+    ll_ = (distribution, hist_compute_time, hist_batch_size,
+           loss_vs_time, accuracy_vs_time, cumsum_vs_step,
+           loss_vs_step, learning_rate_vs_step, time_vs_step)
+    for i, ax in enumerate(gs): ll_[i](root, plt.subplot(ax))
+    sv_()
+
+    for hdl_ in ll_:
+        plt.figure()
+        hdl_(root, plt.gca())
+        sv_(hdl_.__name__)
 
 
 def main():
-    if _a.type==1:
-        master_stats()[_a.plot](plt.gca())
-        plot_name = _a.plot
-
-    elif _a.type==2:
-        gs = gridspec.GridSpec(2, 1)
-        ms = master_stats()
-        ms['loss_vs_step'](plt.subplot(gs[0, 0]))
-        ms['loss_vs_time'](plt.subplot(gs[1, 0]))
-        plot_name = 'loss'
-
-    elif _a.type==3:
-        bandwidth_(plt.gca(), worker_data())
-        plot_name = 'master_bandwidth'
-
-    elif _a.type==0:
-        gs = gridspec.GridSpec(3, 3)
-        # if _a.silent: 
-        plt.figure(figsize=(25,15))
-        p_ = lambda *k_: [all_plots()[k_[3*i+j]](plt.subplot(gs[j,i]))\
-                                        for i in range(3)\
-                                            for j in range(3)\
-                                                if k_[3*i+j] is not None]
-
-        p_('distribution', 'hist_compute_time', 'hist_batch_size',
-           'loss_vs_time', 'accuracy_vs_time', 'cumsum_vs_step',
-           'loss_vs_step', 'learning_rate_vs_step', 'time_vs_step')
-        plot_name = 'all_plots'
-
-    # manager = plt.get_current_fig_manager()
-    # manager.window.showMaximized()
-
-    if _a.save:
-        img_path = os.path.join(_a.dir_path, '%s.pdf'%plot_name)
-        plt.savefig(img_path, bbox_inches='tight')
-        if _a.type==0:
-            for key, func in all_plots().items():
-                img_path = os.path.join(_a.dir_path, '%s.pdf'%key)
-                plt.figure()
-                func(plt.gca())
-                plt.savefig(img_path, bbox_inches='tight')
-
-    if not _a.silent: plt.show()
-
+    root = DataRoot(_a.dir_list)
+    get_path = lambda name_: os.path.join(_a.dir_path, name_)
+    save_hdl = lambda name_=_a.type: utils.save_show_fig(_a, plt, get_path(name_))
+    plt_fig.get(_a.type)(root, save_hdl)
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', default=os.path.join('..','data'), type=str)
+    parser.add_argument('--data_dir', default=utils.resolve_data_dir_os('distributed'))
     parser.add_argument('--dir_name', default='800_cifar10/set2', type=str)
     parser.add_argument('--dir_regex', default='cifar10_*', type=str)
 
-    parser.add_argument('--type', type=int, default=0, choices=range(4))
+    parser.add_argument('--type', default='all_plots', choices=plt_fig.keys())
     parser.add_argument('--short_label', action='store_true')
-    parser.add_argument('--plot', default='loss_vs_step',
-                        choices=['loss_vs_step', 'loss_vs_time', 'accuracy_vs_time', 'time_vs_step'])
-    # parser.add_argument('--hist_ylim', help='y-axis upper limit for histograms', type=float)
     parser.add_argument('--filter_sigma', default=0, type=float)
-    parser.add_argument('--save', action='store_true')
-    parser.add_argument('--silent', action='store_true')
     parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
+
+    utils.bind_fig_save_args(parser)
     return parser.parse_args()
 
 if __name__ == '__main__':
