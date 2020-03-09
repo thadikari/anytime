@@ -6,6 +6,7 @@ import time
 import os
 
 import utils
+import utilities as ut
 
 
 MPI = None
@@ -99,7 +100,7 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
         self._flush_every_n_iter = flush_every_n_iter
         self._tag_order = list(self._train_dict.keys()) + list(self._test_dict.keys())
         self._csv = None if WORK_DIR is None else \
-                    utils.CSVFile('master_stats.csv', WORK_DIR, ['time'] + self._tag_order)
+                    ut.file.CSVFile('master_stats.csv', WORK_DIR, ['time'] + self._tag_order, mode='a')
 
     def begin(self):
         self._iter_count = 0

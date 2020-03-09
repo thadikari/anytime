@@ -123,4 +123,4 @@ python -u test_perf_partitions.py plot --save --silent --ext png pdf
 
 ### Communication overhead vs. number of workers
 * Modify and run [`test_perf_mpi.sh`](test_perf_mpi.sh) to generate data.
-* Use command `python plot_perf_amb.py --type 3 --dir_name test_bandwidth/4_reduce_arr/bandwidth__1024 --dir_regex b*` to plot the results.
+* Use command `python plot_perf_amb.py --type master_bandwidth --dir_name test_bandwidth/4_reduce_arr/bandwidth__1024 --dir_regex b*` to plot the results.

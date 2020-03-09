@@ -6,7 +6,8 @@ import json
 import os
 
 import models
-import utils
+import utilities.file
+import utilities.mpl as utils
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
 
@@ -23,7 +24,7 @@ def safe_get_key(dd, key, val):
 shapes = {'cifar10': [[3, 3, 3, 64], [3, 3, 64, 128], [5, 5, 128, 256], [5, 5, 256, 512], [64], [64], [128], [128], [256], [256], [512], [512], [2048, 128], [128], [128], [128], [128, 256], [256], [256], [256], [256, 512], [512], [512], [512], [512, 10], [10]],
           'alexnet': [[11, 11, 3, 96], [5, 5, 96, 256], [3, 3, 256, 384], [3, 3, 384, 384], [3, 3, 384, 256], [9216, 4096], [4096], [4096, 4096], [4096], [4096, 1000], [1000]],
           'mnist': [(5,5,1,32), (32), (5,5,32,64), (64), (3136,1024), (1024), (1024,10), (10)],
-          'toy_model': models.reg['toy_model'].make_model.shapes}
+          'toy_model': models.reg.get('toy_model').make_model.shapes}
 
 
 # https://stackoverflow.com/questions/49555016/compute-gradients-for-each-time-step-of-tf-while-loop
@@ -38,7 +39,7 @@ def eval():
     batch_size, num_partitions = args.batch_size, args.num_partitions
     partition_size = int(batch_size/num_partitions)
 
-    model = models.reg[args.model]
+    model = models.reg.get(args.model)
     placeholders, model_fac, get_train_fd, get_test_fd = model(batch_size)
     features_pl, labels_pl = placeholders
     opt = tf.train.AdamOptimizer(0.0001)
@@ -109,7 +110,7 @@ def run_batch():
                              '--batch_size', str(2**i), '--num_partitions', str(2**j)])
 
 def plot_all():
-    utils.mpl_init(20, legend_font_size=18, tick_size=18)
+    utils.init(20, legend_font_size=18, tick_size=18)
     if args.file_name is None: # scan all .json files in dir
         for file_name in os.listdir(args.data_dir):
             if file_name.endswith('.json'): plot(os.path.splitext(file_name)[0])
@@ -161,7 +162,7 @@ def reg_parser(name, callable):
 
 
 def parse_common(parser):
-    parser.add_argument('--data_dir', default=utils.resolve_data_dir_os('distributed'))
+    parser.add_argument('--data_dir', default=utilities.file.resolve_data_dir_os('distributed'))
 
 @reg_parser('batch', run_batch)
 def parse_args_batch(parser):

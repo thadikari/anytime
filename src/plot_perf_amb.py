@@ -6,13 +6,15 @@ import scipy.stats as stats
 from pathlib import Path
 import numpy as np
 
-import utils
+import utilities.mpl as utils
+import utilities
+import utilities.file
 
 
 #from matplotlib import ticker
 #ax_.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x,_: '{:,g}'.format(x/10**6) + 'M'))
 plt.style.use('classic')
-utils.mpl_init(20, legend_font_size=18, tick_size=16)
+utils.init(20, legend_font_size=18, tick_size=16)
 
 def proc_csv(file_path):
     rdr_ = csv.DictReader(open(str(file_path)))
@@ -56,7 +58,7 @@ def get_color(dir_name):
 
 
 
-plt_ax = utils.Registry()
+plt_ax = utilities.Registry()
 
 #########################
 # plots using worker_data
@@ -190,7 +192,7 @@ def distribution(root, ax_):
 # multiple plts on figure
 #########################
 
-plt_fig = utils.Registry()
+plt_fig = utilities.Registry()
 
 
 def single_plot(plt_ax_handle):
@@ -236,7 +238,7 @@ def main():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', default=utils.resolve_data_dir_os('distributed'))
+    parser.add_argument('--data_dir', default=utilities.file.resolve_data_dir_os('distributed'))
     parser.add_argument('--dir_name', default='800_cifar10/set2', type=str)
     parser.add_argument('--dir_regex', default='cifar10_*', type=str)
 
@@ -252,4 +254,5 @@ if __name__ == '__main__':
     _a = parse_args()
     _a.dir_path = os.path.join(_a.data_dir, _a.dir_name)
     _a.dir_list = list(map(str, Path(_a.dir_path).glob(_a.dir_regex)))
+    print('[Arguments]', vars(_a))
     main()

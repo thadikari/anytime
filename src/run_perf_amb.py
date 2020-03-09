@@ -3,7 +3,8 @@ import argparse
 import json
 import os
 
-import utils
+import utilities as ut
+import utilities.file
 import distributed as hvd
 import models
 
@@ -37,7 +38,7 @@ def parse_args():
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
-    parser.add_argument('--data_dir', default=utils.resolve_data_dir('distributed'), type=str)
+    parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
     args = parser.parse_args()
 
     if args.dist_opt=='amb':
@@ -69,7 +70,7 @@ def main():
                 json.dump(ddd, fp_, indent=4)
     hvd.set_work_dir(logs_dir)
 
-    model = models.reg[_a.model]
+    model = models.reg.get(_a.model)
     placeholders, create_model_get_sum_loss, get_train_fd, get_test_fd = model(_a.batch_size, _a.test_size)
 
     global_step = tf.train.get_or_create_global_step()

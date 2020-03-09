@@ -7,6 +7,7 @@ import time, os, json
 import numpy as np
 
 import utils
+import utilities.file
 
 
 comm = MPI.COMM_WORLD
@@ -39,8 +40,8 @@ def main(_a):
         with open(os.path.join(work_dir, 'args.json'), 'w') as fp_:
             json.dump(args, fp_, indent=4)
 
-        cols = ['last_send', 'last_bcast'] + LoopProfiler.extra_cols
-        csv = utils.CSVFile('worker_stats.csv', work_dir, cols)
+        cols = ['last_send', 'last_bcast'] + utils.LoopProfiler.extra_cols
+        csv = utilities.file.CSVFile('worker_stats.csv', work_dir, cols)
         prof = utils.LoopProfiler(print, None, csv, _a.dump_freq)
     else:
         prof = utils.LoopProfiler(None, None, None, 1e8)
@@ -58,7 +59,7 @@ def parse_args():
     parser.add_argument('len_arr', type=int)
     parser.add_argument('--num_steps', type=int, default=100)
     parser.add_argument('--dump_freq', type=int, default=1)
-    parser.add_argument('--data_dir', type=str, default=utils.resolve_data_dir('distributed'))
+    parser.add_argument('--data_dir', type=str, default=utilities.file.resolve_data_dir('distributed'))
     return parser.parse_args()
 
 if __name__ == '__main__':
