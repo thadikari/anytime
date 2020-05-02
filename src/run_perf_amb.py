@@ -71,7 +71,7 @@ def main():
     hvd.set_work_dir(logs_dir)
 
     model = models.reg.get(_a.model)
-    placeholders, create_model_get_sum_loss, get_train_fd, get_test_fd = model(_a.batch_size, _a.test_size)
+    placeholders, create_model_get_sum_loss, (get_train_fd, get_test_fd), init_call = model(_a.batch_size, _a.test_size)
 
     global_step = tf.train.get_or_create_global_step()
     learning_rate = tf.compat.v1.train.exponential_decay(_a.starter_learning_rate,
@@ -99,6 +99,7 @@ def main():
                      test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)) # 'accuracy':accuracy
 
     with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
+        mon_sess.run_step_fn(lambda step_context: init_call(step_context.session))
         while not mon_sess.should_stop():
             mon_sess.run(train_op, feed_dict=get_train_fd())
 

@@ -40,7 +40,7 @@ def eval():
     partition_size = int(batch_size/num_partitions)
 
     model = models.reg.get(args.model)
-    placeholders, model_fac, get_train_fd, get_test_fd = model(batch_size)
+    placeholders, model_fac, (get_train_fd, get_test_fd), init_call = model(batch_size)
     features_pl, labels_pl = placeholders
     opt = tf.train.AdamOptimizer(0.0001)
 
@@ -83,6 +83,7 @@ def eval():
              tf.train.StopAtStepHook(last_step=args.last_step)]
     with tf.compat.v1.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
         elapsed = 0.
+        mon_sess.run_step_fn(lambda step_context: init_call(step_context.session))
         while not mon_sess.should_stop():
             train_fd = get_train_fd()
             start_t = time.time()

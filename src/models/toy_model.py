@@ -79,6 +79,6 @@ def get_fac_elements(batch_size, test_size=-1):
     x_test, y_test = create_data(100)
     def get_train_fd():
         return dict(zip([image, label], next(generator)))
-    return placeholders, ModelFac(), get_train_fd, lambda: {image:x_test, label:y_test}
+    return placeholders, ModelFac(), (get_train_fd, lambda: {image:x_test, label:y_test}), (lambda sess: 0)
 
 get_fac_elements.make_model = make_model_conv    # make_model_conv | make_model_fc
