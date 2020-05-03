@@ -16,7 +16,7 @@ def parse_args():
 
     parser.add_argument('model', choices=models.reg.keys())
     parser.add_argument('dist_opt', choices=['fmb', 'amb'])
-    parser.add_argument('intr_opt', choices=['sgd', 'rms', 'adm'])
+    parser.add_argument('intr_opt', choices=['sgd', 'rms', 'adm', 'mom'])
     parser.add_argument('batch_size', type=int)
 
     parser.add_argument('--amb_time_limit', type=float)
@@ -81,6 +81,7 @@ def main():
     # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
     if _a.intr_opt == 'rms': opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
     elif _a.intr_opt == 'adm': opt = tf.train.AdamOptimizer(learning_rate)#*max(1, hvd.size()-1))
+    elif _a.intr_opt == 'mom': opt = tf.train.MomentumOptimizer(learning_rate, momentum=0.9)
     elif _a.intr_opt == 'sgd': opt = tf.train.GradientDescentOptimizer(learning_rate)
 
     # Horovod: add Horovod Distributed Optimizer.

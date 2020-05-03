@@ -195,14 +195,16 @@ class Master:#(tf.train.Optimizer):
 
     def compute_gradients(self, placeholders, cr_sum_loss):
         grads_and_vars = self._optimizer.compute_gradients(cr_sum_loss(*placeholders))
+        grads, vars = zip(*grads_and_vars)
         if size() > 1:
-            grads, vars = zip(*grads_and_vars)
             shapes, Tout = zip(*[(grad.shape.as_list(), grad.dtype) for grad in grads])
             self.wgrads = list(np.zeros(ss, dtype=tt.as_numpy_dtype) for ss,tt in zip(shapes,Tout))
             new_grads = tf.py_func(func=self.master_func, inp=[], Tout=Tout)
-            return shapes, list(zip(new_grads, vars))
         else:
-            return [], grads_and_vars
+            batch_size = tf.dtypes.cast(tf.shape(placeholders[0])[0], tf.float32)
+            new_grads = [grad/batch_size for grad in grads]
+            shapes = []
+        return shapes, list(zip(new_grads, vars))
 
     def apply_gradients(self, grads_and_vars, global_step):
         apply_op = self._optimizer.apply_gradients(grads_and_vars, global_step)

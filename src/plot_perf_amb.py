@@ -214,17 +214,22 @@ def master_bandwidth(root, sv_):
     bandwidth_(root, plt.gca())
     sv_()
 
+
+all_plots_ll = (distribution, hist_compute_time, hist_batch_size,
+               loss_vs_time, accuracy_vs_time, cumsum_vs_step,
+               loss_vs_step, learning_rate_vs_step, time_vs_step)
+
 @plt_fig.reg
 def all_plots(root, sv_):
     gs = gridspec.GridSpec(3, 3)
     plt.figure(figsize=(25,15))
-    ll_ = (distribution, hist_compute_time, hist_batch_size,
-           loss_vs_time, accuracy_vs_time, cumsum_vs_step,
-           loss_vs_step, learning_rate_vs_step, time_vs_step)
-    for i, ax in enumerate(gs): ll_[i](root, plt.subplot(ax))
+    for i, ax in enumerate(gs): all_plots_ll[i](root, plt.subplot(ax))
     sv_()
 
-    for hdl_ in ll_:
+@plt_fig.reg
+def all_plots_iter(root, sv_):
+    all_plots(root, sv_)
+    for hdl_ in all_plots_ll:
         plt.figure()
         hdl_(root, plt.gca())
         sv_(hdl_.__name__)
@@ -233,14 +238,16 @@ def all_plots(root, sv_):
 def main():
     root = DataRoot(_a.dir_list)
     get_path = lambda name_: os.path.join(_a.dir_path, name_)
-    save_hdl = lambda name_=_a.type: utils.save_show_fig(_a, plt, get_path(name_))
+    def save_hdl(name_=_a.type):
+        plt.gcf().canvas.set_window_title(f'{_a.dir_path}: {name_}')
+        utils.save_show_fig(_a, plt, get_path(name_))
     plt_fig.get(_a.type)(root, save_hdl)
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', default=utilities.file.resolve_data_dir_os('distributed'))
-    parser.add_argument('--dir_name', default='800_cifar10/set2', type=str)
-    parser.add_argument('--dir_regex', default='cifar10_*', type=str)
+    parser.add_argument('--dir_name', default='', type=str)
+    parser.add_argument('--dir_regex', default='*', type=str)
 
     parser.add_argument('--type', default='all_plots', choices=plt_fig.keys())
     parser.add_argument('--short_label', action='store_true')
@@ -253,6 +260,10 @@ def parse_args():
 if __name__ == '__main__':
     _a = parse_args()
     _a.dir_path = os.path.join(_a.data_dir, _a.dir_name)
-    _a.dir_list = list(map(str, Path(_a.dir_path).glob(_a.dir_regex)))
+    _a.dir_list = list(str(p_) for p_ in Path(_a.dir_path).glob(_a.dir_regex) if p_.is_dir())
     print('[Arguments]', vars(_a))
-    main()
+    if not len(_a.dir_list):
+        print(f'Empty data directory!!!: {_a.dir_path}.')
+        print('Use --data_dir and --dir_name (e.g. 800_cifar10/set2) to point to a directory with data.')
+        print('Filter directories using --dir_regex (e.g. cifar10_*).')
+    else: main()
