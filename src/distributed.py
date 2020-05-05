@@ -191,7 +191,8 @@ class Master:#(tf.train.Optimizer):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
         default_bcast_func(ROOT_RANK, *shapes)   ## send the variable shapes to workers
         _, vars = zip(*grads_and_vars)
-        return vars, self.apply_gradients(grads_and_vars, global_step)
+        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+            return vars, self.apply_gradients(grads_and_vars, global_step)
 
     def compute_gradients(self, placeholders, cr_sum_loss):
         grads_and_vars = self._optimizer.compute_gradients(cr_sum_loss(*placeholders))

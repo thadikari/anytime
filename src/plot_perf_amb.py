@@ -112,6 +112,7 @@ def cum_(root, ax_):
     ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
     for dir_path, dd, aa in root.worker_data():
+        if y_key not in dd: continue
         mul_ = 1  # aa['batch_size']
         name = Path(dir_path).name
         y_val = dd[y_key]
@@ -161,6 +162,10 @@ def loss_vs_time(*args):
 @plt_ax.reg
 def accuracy_vs_time(*args):
     return plot_(*args, 'time', 'accuracy', 'Wall clock time (s)', 'Test accuracy', True)
+
+@plt_ax.reg
+def accuracy_vs_step(*args):
+    return plot_(*args, 'step', 'accuracy', 'Step', 'Test accuracy', True)
 
 @plt_ax.reg
 def loss_vs_step(*args):
@@ -221,9 +226,10 @@ all_plots_ll = (distribution, hist_compute_time, hist_batch_size,
 
 @plt_fig.reg
 def all_plots(root, sv_):
-    gs = gridspec.GridSpec(3, 3)
-    plt.figure(figsize=(25,15))
-    for i, ax in enumerate(gs): all_plots_ll[i](root, plt.subplot(ax))
+    if _a.subset is None: hdls = all_plots_ll
+    else: hdls = [plt_ax.get(val) for val in _a.subset]
+    axes, fig = utils.get_subplot_axes(_a, len(hdls))
+    for i, ax in enumerate(axes): hdls[i](root, ax)
     sv_()
 
 @plt_fig.reg
@@ -250,10 +256,12 @@ def parse_args():
     parser.add_argument('--dir_regex', default='*', type=str)
 
     parser.add_argument('--type', default='all_plots', choices=plt_fig.keys())
+    parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
     parser.add_argument('--short_label', action='store_true')
     parser.add_argument('--filter_sigma', default=0, type=float)
     parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 
+    utils.bind_subplot_args(parser, ax_size_default=[8,5])
     utils.bind_fig_save_args(parser)
     return parser.parse_args()
 

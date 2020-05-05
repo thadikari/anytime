@@ -39,6 +39,7 @@ def parse_args():
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
+    parser.add_argument('--master_cpu', action='store_true')
     args = parser.parse_args()
 
     if args.dist_opt=='amb':
@@ -62,6 +63,7 @@ def main():
     logs_dir = None if _a.no_stats else os.path.join(_a.data_dir, run_id)
 
     if hvd.is_master():
+        if _a.master_cpu: os.environ['CUDA_VISIBLE_DEVICES'] = ''
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
             with open(os.path.join(logs_dir, 'args.json'), 'w') as fp_:
