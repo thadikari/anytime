@@ -124,7 +124,7 @@ python -u test_perf_partitions.py plot --save --silent --ext png pdf
 
 
 ### Impact of AMB on batch normalization
-* See plots in [`data/1100_batchnorm_impact_AMB`](`data/1100_batchnorm_impact_AMB`).
+* See plots in [`data/1100_batchnorm_impact_AMB`](data/1100_batchnorm_impact_AMB).
 * When `amb_num_partitions=1` AMB has same performance as FMB. When `amb_num_partitions` increasese the performance decreases.
 
 
