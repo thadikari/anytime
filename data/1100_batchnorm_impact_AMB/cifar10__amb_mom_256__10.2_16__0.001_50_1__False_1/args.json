@@ -1,0 +1,42 @@
+{
+    "model": "cifar10",
+    "dist_opt": "amb",
+    "intr_opt": "mom",
+    "batch_size": 256,
+    "amb_time_limit": 10.2,
+    "amb_num_partitions": 16,
+    "induce": false,
+    "dist": [
+        [
+            0,
+            0,
+            0.4
+        ],
+        [
+            0,
+            0.4,
+            0.3
+        ],
+        [
+            2,
+            0.3,
+            0.2
+        ],
+        [
+            5,
+            0.3,
+            0.1
+        ]
+    ],
+    "starter_learning_rate": 0.001,
+    "decay_steps": 50,
+    "decay_rate": 1,
+    "extra": null,
+    "no_stats": false,
+    "log_freq": 1,
+    "last_step": 1500,
+    "test_size": 128,
+    "data_dir": "/home/tharindu/SCRATCH/distributed",
+    "master_cpu": true,
+    "num_workers": 1
+}

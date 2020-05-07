@@ -104,15 +104,15 @@ wk0|step = 129, learning_rate = 0.001, loss = 2.265991, accuracy = 0.15 (6.426 s
     * Partition size: `batch_size`/`amb_num_partitions`
     * Time per step: Time taken to go through all the partitions (covering the whole batch)
     * Time per sample: Time per step divided by batch size
-<img src="data/test_perf_partitions/ec2-m3-xlarge_cifar10.png?raw=true"/>
+<img src="data/1000_test_perf_partitions/ec2-m3-xlarge_cifar10.png?raw=true"/>
 
 * Conclusion: For CIFAR10, if `batch_size` > 512, maintaining a partition size > 32 (2^5) will cause a minimal impact on the execution time.
 * This means for `batch_size`=512 set `amb_num_partitions`=512/32=16.
 * Below is another example for fully connected (top) vs convolutional (bottom) network for a toy dataset. Note that the while loop has a lower impact for convolutional nets. This is because the matrix multiplication in fully connected nets is well supported in modern hardware.
-* See more in [`data/test_perf_partitions`](data/test_perf_partitions).
+* See more in [`data/1000_test_perf_partitions`](data/1000_test_perf_partitions).
 
-<img src="data/test_perf_partitions/ec2-t2-micro_toy_model_fc.png?raw=true"/>
-<img src="data/test_perf_partitions/ec2-t2-micro_toy_model_conv.png?raw=true"/>
+<img src="data/1000_test_perf_partitions/ec2-t2-micro_toy_model_fc.png?raw=true"/>
+<img src="data/1000_test_perf_partitions/ec2-t2-micro_toy_model_conv.png?raw=true"/>
 
 * Sample commands:
 ``` shell
@@ -122,6 +122,12 @@ python -u test_perf_partitions.py batch toy_model
 python -u test_perf_partitions.py plot --save --silent --ext png pdf
 ```
 
+
+### Impact of AMB on batch normalization
+* See plots in [`data/1100_batchnorm_impact_AMB`](`data/1100_batchnorm_impact_AMB`).
+* When `amb_num_partitions=1` AMB has same performance as FMB. When `amb_num_partitions` increasese the performance decreases.
+
+
 ### Communication overhead vs. number of workers
-* Modify and run [`test_perf_mpi.sh`](test_perf_mpi.sh) to generate data.
+* Modify and run [`test_bandwidth.sh`](test_bandwidth.sh) to generate data.
 * Use command `python plot_perf_amb.py --type master_bandwidth --dir_name test_bandwidth/4_reduce_arr/bandwidth__1024 --dir_regex b*` to plot the results.

@@ -5,6 +5,7 @@ import json, csv, os, argparse
 import scipy.stats as stats
 from pathlib import Path
 import numpy as np
+import re
 
 import utilities.mpl as utils
 import utilities
@@ -49,10 +50,15 @@ def get_label(dir_name):
     if _a.short_label:
         if '_fmb_' in dir_name: return 'FMB'
         if '_amb_' in dir_name: return 'AMB'
+    elif _a.resub:
+        for pattern,repl in _a.resub:
+            dir_name = re.sub(pattern,repl,dir_name)
+        return dir_name
     else:
         return dir_name
 
 def get_color(dir_name):
+    if not _a.short_label: return
     if '_fmb_' in dir_name: return 'r'
     if '_amb_' in dir_name: return 'b'
 
@@ -257,7 +263,10 @@ def parse_args():
 
     parser.add_argument('--type', default='all_plots', choices=plt_fig.keys())
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
+
     parser.add_argument('--short_label', action='store_true')
+    parser.add_argument('--resub', action='append', nargs=2, metavar=('patter','substitute'))
+
     parser.add_argument('--filter_sigma', default=0, type=float)
     parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 
