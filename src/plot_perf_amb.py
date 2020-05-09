@@ -159,6 +159,7 @@ def plot_(root, ax_, x_key, y_key, x_label, y_label, filter=0, ysci=False):
         ax_.plot(dd[x_key][:num_ele], y_val, color=get_color(name), 
                                 linewidth=1.5, label=get_label(name))
     utils.fmt_ax(ax_, x_label, y_label, leg=1)
+    if _a.ylog: ax_.set_yscale('log')
     ax_.grid(True, which='both')
 
 @plt_ax.reg
@@ -267,6 +268,7 @@ def parse_args():
     parser.add_argument('--short_label', action='store_true')
     parser.add_argument('--resub', action='append', nargs=2, metavar=('patter','substitute'))
 
+    parser.add_argument('--ylog', action='store_true')
     parser.add_argument('--filter_sigma', default=0, type=float)
     parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 

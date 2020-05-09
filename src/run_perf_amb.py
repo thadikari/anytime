@@ -66,6 +66,7 @@ def main():
         if _a.master_cpu: os.environ['CUDA_VISIBLE_DEVICES'] = ''
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
+            print('logs dir: %s'%logs_dir)
             with open(os.path.join(logs_dir, 'args.json'), 'w') as fp_:
                 ddd = vars(_a)
                 ddd['num_workers'] = num_workers
