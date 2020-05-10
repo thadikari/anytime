@@ -66,7 +66,9 @@ def broadcast(tensors, root_rank):
                       Tout=tuple(tensor.dtype for tensor in tensors))
 
 def broadcast_assign_vars(vars, root_rank):
-    nvars = broadcast(vars, root_rank)
+    vars_cast = [tf.cast(tt, tf.float64) for tt in vars]
+    nvars = broadcast(vars_cast, root_rank)
+    nvars = [tf.cast(tt, tf.float32) for tt in nvars]
     return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
 
 
@@ -100,7 +102,7 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
         self._flush_every_n_iter = flush_every_n_iter
         self._tag_order = list(self._train_dict.keys()) + list(self._test_dict.keys())
         self._csv = None if WORK_DIR is None else \
-                    ut.file.CSVFile('master_stats.csv', WORK_DIR, ['time'] + self._tag_order, mode='a')
+                    ut.file.CSVFile('master_stats.csv', WORK_DIR, ['time'] + self._tag_order, mode='w')
 
     def begin(self):
         self._iter_count = 0

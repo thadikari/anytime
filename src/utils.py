@@ -11,7 +11,7 @@ class WorkerProfiler:
         self.dump_freq = dump_freq
         self.csv = None if (work_dir is None) else \
                    ut.file.CSVFile('worker_stats.csv', work_dir, \
-                           ['time', 'step'] + columns + ['compute_time_master'], mode='a')
+                           ['time', 'step'] + columns + ['compute_time_master'], mode='w')
 
     def reset(self):
         self.cache = []
