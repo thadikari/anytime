@@ -5,6 +5,7 @@ import os
 
 import utilities as ut
 import utilities.file
+import utilities.learningrate
 import distributed as hvd
 import models
 
@@ -29,10 +30,6 @@ def parse_args():
                                         [[0, 0, .4], [0, .4, .3], [2, .3, .2], [5, .3, .1]]
                                         )
 
-    parser.add_argument('--starter_learning_rate', default=0.001, type=float)
-    parser.add_argument('--decay_steps', default=50, type=int)
-    parser.add_argument('--decay_rate', default=1, type=float)
-
     parser.add_argument('--extra', default=None, type=str)
     parser.add_argument('--no_stats', help='do not save stats', action='store_true')
     parser.add_argument('--log_freq', default=1, type=int)
@@ -40,6 +37,8 @@ def parse_args():
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
     parser.add_argument('--master_cpu', action='store_true')
+
+    ut.learningrate.bind_learning_rates(parser)
     args = parser.parse_args()
 
     if args.dist_opt=='amb':
@@ -58,7 +57,9 @@ def main():
     # Horovod: initialize Horovod.
     hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist)
     num_workers = hvd.num_workers()
-    run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{_a.starter_learning_rate:g}_{_a.decay_steps}_{_a.decay_rate:g}__{_a.induce}_{num_workers}'
+    scheduler = ut.learningrate.lrate_scheduler(_a)(_a, _a.last_step)
+    lrate_str = scheduler.to_str()
+    run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{lrate_str}__{_a.induce}_{num_workers}'
     print('run_id: %s'%run_id)
     logs_dir = None if _a.no_stats else os.path.join(_a.data_dir, run_id)
 
@@ -77,8 +78,7 @@ def main():
     placeholders, create_model_get_sum_loss, (get_train_fd, get_test_fd), init_call = model(_a.batch_size, _a.test_size)
 
     global_step = tf.train.get_or_create_global_step()
-    learning_rate = tf.compat.v1.train.exponential_decay(_a.starter_learning_rate,
-                    global_step, _a.decay_steps, _a.decay_rate, staircase=True)
+    learning_rate = tf.placeholder(tf.float32, shape=[])
 
     # Horovod: adjust learning rate based on number of GPUs.
     # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
@@ -104,8 +104,11 @@ def main():
 
     with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
         mon_sess.run_step_fn(lambda step_context: init_call(step_context.session))
+        step = 0
         while not mon_sess.should_stop():
-            mon_sess.run(train_op, feed_dict=get_train_fd())
+            lrate = scheduler(step)
+            mon_sess.run(train_op, feed_dict={**get_train_fd(), learning_rate:lrate})
+            step += 1
 
 
 if __name__ == '__main__':
