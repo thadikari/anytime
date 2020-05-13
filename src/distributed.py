@@ -16,14 +16,15 @@ ROOT_RANK = 0
 WORK_DIR = None
 INDUCE_STRAGGLERS = None
 INDUCE_DIST = None
+LOG_STATS = None
 
 def set_work_dir(work_dir=None):
     global WORK_DIR
     WORK_DIR = work_dir
 
-def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging.INFO): # INFO DEBUG
+def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging.INFO, log_stats=True): # INFO DEBUG
 
-    global MPI, comm, log, WORK_DIR, INDUCE_STRAGGLERS, INDUCE_DIST
+    global MPI, comm, log, WORK_DIR, INDUCE_STRAGGLERS, INDUCE_DIST, LOG_STATS
 
     logger = logging.getLogger('dstr') # __name__
     if logger.hasHandlers(): logger.propagate = 0
@@ -46,6 +47,7 @@ def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging
     INDUCE_STRAGGLERS = induce_stragglers
     INDUCE_DIST = induce_dist
     WORK_DIR = work_dir
+    LOG_STATS = log_stats
 
     log = logger.getChild('wk%d'%rank())
     log.info('Initialized rank [%d], hostname [%s], host [%s]', rank(), str(hostname), str(host))
@@ -130,10 +132,11 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
             if self._csv is not None: self._csv.writerow([time.time()-self._start_time] + stats, False)
 
             line = ', '.join(map(lambda a_,b_: '%s = %s'%(a_,b_), self._tag_order, stats))
-            if self._last_time is None: #tf.get_logger()
-                log.info(line)
-            else:
-                log.info('%s (%.3f sec)'%(line, time.time()-self._last_time))
+            if LOG_STATS:
+                if self._last_time is None: #tf.get_logger()
+                    log.info(line)
+                else:
+                    log.info('%s (%.3f sec)'%(line, time.time()-self._last_time))
 
             self._last_time = time.time()
 
@@ -290,7 +293,7 @@ class Worker:
         # should be in the same order as log_col_names variable
         meta = np.array([num_samples, last_send, last_bcast, last_exit, sleep_time, compute_time])
         meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(log_col_names, meta))
-        log.info(meta_str)
+        if LOG_STATS: log.info(meta_str)
         mpi_reduce_grads(grads, meta)
         self.prof.tag('bcast')
 

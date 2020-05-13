@@ -31,7 +31,7 @@ def parse_args():
                                         )
 
     parser.add_argument('--extra', default=None, type=str)
-    parser.add_argument('--no_stats', help='do not save stats', action='store_true')
+    parser.add_argument('--no_stats', help='do not print stats', action='store_true')
     parser.add_argument('--log_freq', default=1, type=int)
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
@@ -55,15 +55,15 @@ def main():
     amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_partitions}' if _a.dist_opt=='amb' else ''
 
     # Horovod: initialize Horovod.
-    hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist)
+    hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist, log_stats=(not _a.no_stats))
     num_workers = hvd.num_workers()
     scheduler = ut.learningrate.lrate_scheduler(_a)(_a, _a.last_step)
     lrate_str = scheduler.to_str()
     run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{lrate_str}__{_a.induce}_{num_workers}'
-    print('run_id: %s'%run_id)
-    logs_dir = None if _a.no_stats else os.path.join(_a.data_dir, run_id)
+    logs_dir = os.path.join(_a.data_dir, run_id)
 
     if hvd.is_master():
+        print('run_id: %s'%run_id)
         if _a.master_cpu: os.environ['CUDA_VISIBLE_DEVICES'] = ''
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
