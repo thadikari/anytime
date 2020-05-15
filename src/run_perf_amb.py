@@ -61,6 +61,7 @@ def main():
     lrate_str = scheduler.to_str()
     run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{lrate_str}__{_a.induce}_{num_workers}'
     logs_dir = os.path.join(_a.data_dir, run_id)
+    ds_args = {'batch_size':_a.batch_size, 'test_size':_a.test_size}
 
     if hvd.is_master():
         print('run_id: %s'%run_id)
@@ -72,10 +73,12 @@ def main():
                 ddd = vars(_a)
                 ddd['num_workers'] = num_workers
                 json.dump(ddd, fp_, indent=4)
+    else:
+        ds_args.update({'num_workers':num_workers, 'worker_index':hvd.rank()-1})
     hvd.set_work_dir(logs_dir)
 
     model = models.reg.get(_a.model)
-    placeholders, create_model_get_sum_loss, (get_train_fd, get_test_fd), init_call = model(_a.batch_size, _a.test_size)
+    placeholders, create_model_get_sum_loss, (get_train_fd, get_test_fd), init_call = model(ds_args)
 
     global_step = tf.train.get_or_create_global_step()
     learning_rate = tf.placeholder(tf.float32, shape=[])

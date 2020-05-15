@@ -10,8 +10,8 @@ import utilities.data.imagenet as imagenet
 
 
 @registry.register('cifar10')
-def create_cifar(batch_size, test_size=-1):
-    placeholders, feed_ds, init_call = du.get_dataset_pipeline('cifar10', batch_size, test_size)
+def create_cifar(dataset_args):
+    ds = du.make_dataset('cifar10', dataset_args)
     kwargs, feed_model = cifar.create_plh(with_data=False)
 
     class ModelFac:
@@ -21,13 +21,14 @@ def create_cifar(batch_size, test_size=-1):
             return sum_loss
         def get_metrics(self): return self.accuracy, self.avg_loss
 
-    return placeholders, ModelFac(), du.merge_feed_dicts(feed_ds, feed_model), init_call
+    fds = du.merge_feed_dicts((ds.get_train_fd, ds.get_test_fd), feed_model)
+    return ds.placeholders, ModelFac(), fds, ds.init
 
 
 
 
 def create_mnist(ds_name):
-    def mnist_inner(batch_size, test_size=-1):
+    def mnist_inner(dataset_args):
 
         class ModelFac:
             def __call__(self, feature, target):
@@ -36,8 +37,8 @@ def create_mnist(ds_name):
                 return sum_loss
             def get_metrics(self): return self.accuracy, self.avg_loss
 
-        placeholders, feed_ds, init_call = du.get_dataset_pipeline(ds_name, batch_size, test_size)
-        return placeholders, ModelFac(), feed_ds, init_call
+        ds = du.make_dataset(ds_name, dataset_args)
+        return ds.placeholders, ModelFac(), (ds.get_train_fd, ds.get_test_fd), ds.init
     return mnist_inner
 
 register = lambda name: registry.register(name)(create_mnist(name))
@@ -48,18 +49,19 @@ register('mnist')
 
 
 def create_imagenet(ds_name, model):
-    def imagenet_inner(batch_size, test_size=1024):
-        placeholders, feed_ds, init_call = imagenet.get_dataset_pipeline(ds_name, batch_size, test_size)
+    def imagenet_inner(dataset_args):
+        ds = imagenet.make_dataset(ds_name, dataset_args)
         kwargs, feed_model = model.create_plh(with_data=False)
 
         class ModelFac:
             def __call__(self, feature, target):
                 logits = model.create_model(feature, **kwargs)
-                self.accuracy, sum_loss, self.avg_loss = du.compute_metrics(logits, target)
+                self.accuracy, sum_loss, self.avg_loss = du.compute_metrics_topk(logits, target, 5)
                 return sum_loss
             def get_metrics(self): return self.accuracy, self.avg_loss
 
-        return placeholders, ModelFac(), du.merge_feed_dicts(feed_ds, feed_model), init_call
+        fds = du.merge_feed_dicts((ds.get_train_fd, ds.get_test_fd), feed_model)
+        return ds.placeholders, ModelFac(), fds, ds.init
     return imagenet_inner
 
 regimgnt = lambda name, ds_name, model=wrnet: registry.register(name)(create_imagenet(ds_name, model))
