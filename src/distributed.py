@@ -14,17 +14,15 @@ comm = None
 log = None
 ROOT_RANK = 0
 WORK_DIR = None
-INDUCE_STRAGGLERS = None
-INDUCE_DIST = None
 LOG_STATS = None
 
 def set_work_dir(work_dir=None):
     global WORK_DIR
     WORK_DIR = work_dir
 
-def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging.INFO, log_stats=True): # INFO DEBUG
+def init(work_dir=None, log_level=logging.INFO, log_stats=True): # INFO DEBUG
 
-    global MPI, comm, log, WORK_DIR, INDUCE_STRAGGLERS, INDUCE_DIST, LOG_STATS
+    global MPI, comm, log, WORK_DIR, LOG_STATS
 
     logger = logging.getLogger('dstr') # __name__
     if logger.hasHandlers(): logger.propagate = 0
@@ -44,8 +42,6 @@ def init(work_dir=None, induce_stragglers=0, induce_dist=None, log_level=logging
     MPI = MPI_
     comm = MPI.COMM_WORLD
 
-    INDUCE_STRAGGLERS = induce_stragglers
-    INDUCE_DIST = induce_dist
     WORK_DIR = work_dir
     LOG_STATS = log_stats
 
@@ -184,13 +180,21 @@ class Distributor:
     def get_variables(self):
         return self.vars
 
+    def set_straggler(self, induce_dist):
+        return self._node.set_straggler(induce_dist)
+
+    def set_strategy(self, strategy):
+        return self._node.set_strategy(strategy)
+
 
 log_col_names = ['num_samples', 'last_send', 'last_bcast', 'last_exit', 'sleep_time', 'compute_time']
 
 class Master:#(tf.train.Optimizer):
     def __init__(self, optimizer):
         self._optimizer = optimizer
-        self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
+
+    def set_straggler(self, *args): pass
+    def set_strategy(self, strategy): self.strategy = strategy.make_master()
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
@@ -205,7 +209,7 @@ class Master:#(tf.train.Optimizer):
         if size() > 1:
             shapes, Tout = zip(*[(grad.shape.as_list(), grad.dtype) for grad in grads])
             self.wgrads = list(np.zeros(ss, dtype=tt.as_numpy_dtype) for ss,tt in zip(shapes,Tout))
-            new_grads = tf.py_func(func=self.master_func, inp=[], Tout=Tout)
+            new_grads = tf.py_func(func=self.collect_grads_func, inp=[], Tout=Tout)
         else:
             batch_size = tf.dtypes.cast(tf.shape(placeholders[0])[0], tf.float32)
             new_grads = [grad/batch_size for grad in grads]
@@ -221,29 +225,71 @@ class Master:#(tf.train.Optimizer):
         else:
             return apply_op
 
-    # called only in the master node
-    def master_func(self):
+    def collect_grads_func(self):
+        for arr in self.wgrads: np.multiply(arr, 0., out=arr)
+        self.strategy.collect_grads(self.wgrads)
+        return self.wgrads
+
+
+class SynchronousMaster:
+    def __init__(self):
+        self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
+
+    def collect_grads(self, grads):
         log.debug('Listening to [%d] workers', num_workers())
-        self.map_grads(np.multiply, 0.)
-        meta_ll = mpi_reduce_grads(self.wgrads, np.zeros(len(log_col_names)))
+        meta_ll = mpi_reduce_grads(grads, np.zeros(len(log_col_names)))
         meta_ll = [arr.tolist() for arr in meta_ll[1:]]
         total = sum(meta[0] for meta in meta_ll)
-        for acc in self.wgrads: np.divide(acc, total, out=acc)
+        for acc in grads: np.divide(acc, total, out=acc)
         with self.work as ww:
             # mpi gather always ensures the rank order??
             for i in range(num_workers()):
                 ww.on_result(meta_ll[i])
-        return self.wgrads
 
-    def map_grads(self, func, arg):
-        for i, arr in enumerate(self.wgrads):
-            self.wgrads[i] = func(arr,arg, out=arr)
+
+class SynchronousWorker:
+    def dispatch_grads(self, *args): return mpi_reduce_grads(*args)
+
+class Synchronous:
+    def make_master(self): return SynchronousMaster()
+    def make_worker(self): return SynchronousWorker()
+
+
+class AsynchronousMaster:
+    def __init__(self):
+        self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
+
+    def collect_grads(self, grads):
+        state = MPI.Status()
+        ngrads, meta = comm.recv(source=MPI.ANY_SOURCE, status=state)
+        wk_ind = state.Get_source()
+        log.info('Received from worker [%d]', num_workers())
+        for ngrd,grd in zip(ngrads,grads): np.divide(ngrd, meta[0], out=grd)
+        with self.work as ww: ww.on_result(meta.tolist())
+
+class ReqMan:
+    def __init__(self): self.reqs = []
+    def add_clear(self, req):
+        req.wait(); return
+        self.reqs.append(req)
+        self.reqs = [req for req in self.reqs if not req.test()[0]]
+        log.info('Requests queue size [%d]', len(self.reqs))
+
+class AsynchronousWorker:
+    def __init__(self): self.reqman = ReqMan()
+    def dispatch_grads(self, grads, meta):
+        req = comm.isend((grads, meta), dest=ROOT_RANK)
+        self.reqman.add_clear(req)
+
+class Asynchronous:
+    def make_master(self): return AsynchronousMaster()
+    def make_worker(self): return AsynchronousWorker()
 
 
 class Straggler:
-    def __init__(self, max_sleep_time):
+    def __init__(self, induce_dist, max_sleep_time):
         self.sleep_time = 0.
-        means, std_devs, weights = zip(*INDUCE_DIST)
+        means, std_devs, weights = zip(*induce_dist)
         modes = list(zip(means, std_devs))
         lim = min(max_sleep_time, max([it[0]+it[1]*5 for it in modes]))
         log.info('[INDUCED STRAGGLERS] modes:%s, weights:%s', modes, weights)
@@ -262,7 +308,10 @@ class Worker:
     def __init__(self, optimizer):
         self._optimizer = optimizer
         self.prof = utils.WorkerTag()
-        if INDUCE_STRAGGLERS: self.straggler = Straggler(2**10)
+        self.straggler = None
+
+    def set_straggler(self, induce_dist):
+        self.straggler = Straggler(induce_dist, 2**10)
         # super().__init__(name=self.__class__.__name__, use_locking=False)
 
     def reset(self): self.computing_started = time.time()
@@ -270,7 +319,9 @@ class Worker:
     def on_new_round_func(self):
         self.reset()
         self.prof.tag('compute')
-        if INDUCE_STRAGGLERS: self.straggler.induce()
+        if self.straggler: self.straggler.induce()
+
+    def set_strategy(self, strategy): self.strategy = strategy.make_worker()
 
     '''
     worker cycle:
@@ -282,19 +333,19 @@ class Worker:
         compute new grads (compute_time also includes sleep_time)
         send the new grads (the time for this will be sent with the next update)
     '''
-    def dispatch_func(self, num_samples, *grads):
+    def dispatch_grads_func(self, num_samples, *grads):
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
         last_bcast = self.prof.get('bcast')
         last_exit = self.prof.get('exit')
-        sleep_time = self.straggler.sleep_time if INDUCE_STRAGGLERS else 0.
+        sleep_time = self.straggler.sleep_time if self.straggler else 0.
         compute_time = self.prof.tag('send')
         # must send num_samples at the first position!!!!!!!
         # should be in the same order as log_col_names variable
         meta = np.array([num_samples, last_send, last_bcast, last_exit, sleep_time, compute_time])
         meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(log_col_names, meta))
         if LOG_STATS: log.info(meta_str)
-        mpi_reduce_grads(grads, meta)
+        self.strategy.dispatch_grads(grads, meta)
         self.prof.tag('bcast')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
@@ -309,7 +360,7 @@ class Worker:
 
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
-        with ctrl_pyfunc(self.dispatch_func, inp=[num_samples]+list(grads), Tout=[]):
+        with ctrl_pyfunc(self.dispatch_grads_func, inp=[num_samples]+list(grads), Tout=[]):
             with ctrl_dep([broadcast_assign_vars(vars, 0), tf.assign_add(global_step, 1)]):
                 return py_exc(lambda:self.prof.tag('exit'))
 

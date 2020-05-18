@@ -17,9 +17,14 @@ plt.style.use('classic')
 utils.init(20, legend_font_size=18, tick_size=16)
 
 def proc_csv(file_path):
-    if os.stat(file_path).st_size==0: return {}
-    ds = pandas.read_csv(file_path, header=0).to_dict('Series')
-    return {key:ds[key].to_numpy() for key in ds}
+    try:
+        if os.stat(file_path).st_size==0: return {}
+        ds = pandas.read_csv(file_path, header=0).to_dict('Series')
+        return {key:ds[key].to_numpy() for key in ds}
+    except Exception as e:
+        print(f'Error reading: {file_path}')
+        print(e)
+        return {}
 
 class DataRoot:
     def __init__(self, dir):

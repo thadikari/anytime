@@ -55,7 +55,7 @@ def main():
     amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_partitions}' if _a.dist_opt=='amb' else ''
 
     # Horovod: initialize Horovod.
-    hvd.init(induce_stragglers=_a.induce, induce_dist=_a.dist, log_stats=(not _a.no_stats))
+    hvd.init(log_stats=(not _a.no_stats))
     num_workers = hvd.num_workers()
     scheduler = ut.learningrate.lrate_scheduler(_a)(_a, _a.last_step)
     lrate_str = scheduler.to_str()
@@ -94,6 +94,8 @@ def main():
     if _a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt)
     elif _a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt,
                                       _a.amb_time_limit, _a.amb_num_partitions)
+    if _a.induce: dist.set_straggler(induce_dist=_a.dist)
+    dist.set_strategy(hvd.Synchronous())
 
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
     accuracy, avg_loss = create_model_get_sum_loss.get_metrics()
