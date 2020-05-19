@@ -6,10 +6,18 @@ import os
 import utilities as ut
 import utilities.file
 import utilities.learningrate
-import distributed as hvd
+import strategy as sgy
+import nodes as nds
 import models
 
 tf.logging.set_verbosity(tf.logging.INFO)
+
+opt_reg = utilities.Registry()
+_r = opt_reg.put
+_r('rms', tf.train.RMSPropOptimizer)
+_r('adm', tf.train.AdamOptimizer)
+_r('sgd', tf.train.GradientDescentOptimizer)
+_r('mom', lambda lr_: tf.train.MomentumOptimizer(lr_, momentum=0.9))
 
 
 def parse_args():
@@ -17,7 +25,7 @@ def parse_args():
 
     parser.add_argument('model', choices=models.reg.keys())
     parser.add_argument('dist_opt', choices=['fmb', 'amb'])
-    parser.add_argument('intr_opt', choices=['sgd', 'rms', 'adm', 'mom'])
+    parser.add_argument('intr_opt', choices=opt_reg.keys())
     parser.add_argument('batch_size', type=int)
 
     parser.add_argument('--amb_time_limit', type=float)
@@ -56,19 +64,18 @@ def main():
     extra_line = '' if _a.extra is None else '__%s'%_a.extra
     amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_partitions}' if _a.dist_opt=='amb' else ''
 
-    # Horovod: initialize Horovod.
-    hvd.init(log_stats=(not _a.no_stats))
-    num_workers = hvd.num_workers()
+    sgy.init() # log_level=(not _a.no_stats))
+    num_workers = sgy.num_workers()
     scheduler = ut.learningrate.lrate_scheduler(_a)(_a, _a.last_step)
     lrate_str = scheduler.to_str()
     run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{lrate_str}__{_a.induce}_{num_workers}'
     logs_dir = os.path.join(_a.data_dir, run_id)
     ds_args = {'batch_size':_a.batch_size, 'test_size':_a.test_size}
 
-    if (hvd.is_master() and _a.cpu_master) or (not hvd.is_master() and _a.gpu_master):
+    if (sgy.is_master() and _a.cpu_master) or (not sgy.is_master() and _a.gpu_master):
         os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
-    if hvd.is_master():
+    if sgy.is_master():
         print('run_id: %s'%run_id)
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
@@ -78,38 +85,31 @@ def main():
                 ddd['num_workers'] = num_workers
                 json.dump(ddd, fp_, indent=4)
     else:
-        ds_args.update({'num_workers':num_workers, 'worker_index':hvd.rank()-1})
-    hvd.set_work_dir(logs_dir)
+        ds_args.update({'num_workers':num_workers, 'worker_index':sgy.rank()-1})
 
     model = models.reg.get(_a.model)
     placeholders, create_model_get_sum_loss, (get_train_fd, get_test_fd), init_call = model(ds_args)
 
     global_step = tf.train.get_or_create_global_step()
     learning_rate = tf.placeholder(tf.float32, shape=[])
+    opt = opt_reg.get(_a.intr_opt)(learning_rate)
 
-    # Horovod: adjust learning rate based on number of GPUs.
-    # in anytime impl this adjustment is made internally, by the number of steps returned by each worker
-    if _a.intr_opt == 'rms': opt = tf.train.RMSPropOptimizer(learning_rate)#*max(1, hvd.size()-1))
-    elif _a.intr_opt == 'adm': opt = tf.train.AdamOptimizer(learning_rate)#*max(1, hvd.size()-1))
-    elif _a.intr_opt == 'mom': opt = tf.train.MomentumOptimizer(learning_rate, momentum=0.9)
-    elif _a.intr_opt == 'sgd': opt = tf.train.GradientDescentOptimizer(learning_rate)
-
-    # Horovod: add Horovod Distributed Optimizer.
-    if _a.dist_opt == 'fmb': dist = hvd.FixedMiniBatchDistributor(opt)
-    elif _a.dist_opt == 'amb': dist = hvd.AnytimeMiniBatchDistributor(opt,
+    if _a.dist_opt == 'fmb': dist = nds.FixedMiniBatchDistributor(opt)
+    elif _a.dist_opt == 'amb': dist = nds.AnytimeMiniBatchDistributor(opt,
                                       _a.amb_time_limit, _a.amb_num_partitions)
     if _a.induce: dist.set_straggler(induce_dist=_a.dist)
-    dist.set_strategy(hvd.Synchronous())
+    dist.set_strategy(sgy.Synchronous(work_dir=logs_dir))
 
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
     accuracy, avg_loss = create_model_get_sum_loss.get_metrics()
 
-    hooks = [hvd.BroadcastVariablesHook(dist),
+    hooks = [nds.BroadcastVariablesHook(dist),
              tf.train.StopAtStepHook(last_step=_a.last_step)]
-    if hvd.is_master():
-        hooks.append(hvd.CSVLoggingHook(every_n_iter=_a.log_freq,
+    if sgy.is_master():
+        hooks.append(nds.CSVLoggingHook(every_n_iter=_a.log_freq,
                      train_tensors={'step':global_step, 'loss':avg_loss, 'learning_rate':learning_rate},
-                     test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd)) # 'accuracy':accuracy
+                     test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd,
+                     work_dir=logs_dir)) # 'accuracy':accuracy
 
     with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:
         mon_sess.run_step_fn(lambda step_context: init_call(step_context.session))

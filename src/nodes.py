@@ -1,63 +1,15 @@
 import tensorflow as tf
 import numpy as np
+import collections
 import logging
-import socket
 import time
 import os
 
-import utils
 import utilities as ut
+import strategy as sgy
 
-
-MPI = None
-comm = None
 log = None
-ROOT_RANK = 0
-WORK_DIR = None
-LOG_STATS = None
 
-def set_work_dir(work_dir=None):
-    global WORK_DIR
-    WORK_DIR = work_dir
-
-def init(work_dir=None, log_level=logging.INFO, log_stats=True): # INFO DEBUG
-
-    global MPI, comm, log, WORK_DIR, LOG_STATS
-
-    logger = logging.getLogger('dstr') # __name__
-    if logger.hasHandlers(): logger.propagate = 0
-    logger.setLevel(log_level)
-    ch = logging.StreamHandler()
-    formatter = logging.Formatter(
-            '%(asctime)s---------------------|%(name)s|%(message)s',
-            # logging.BASIC_FORMAT,
-            "%H:%M:%S")
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-    hostname = socket.gethostname()
-    host = socket.gethostbyname(hostname)
-    logger.info('Initializing...')
-
-    from mpi4py import MPI as MPI_
-    MPI = MPI_
-    comm = MPI.COMM_WORLD
-
-    WORK_DIR = work_dir
-    LOG_STATS = log_stats
-
-    log = logger.getChild('wk%d'%rank())
-    log.info('Initialized rank [%d], hostname [%s], host [%s]', rank(), str(hostname), str(host))
-
-
-def is_master(): return rank()==ROOT_RANK
-def rank(): return comm.Get_rank()
-def size(): return comm.Get_size()
-def num_workers(): return size()-1
-
-
-def default_bcast_func(*data):
-    log.debug('Broadcast from [%d], rank [%d]', ROOT_RANK, rank())
-    return comm.bcast(data, root=ROOT_RANK)
 
 # py_func doesn't work on GPUs without casting
 def safe_assign_vars(vars, func):
@@ -71,14 +23,13 @@ class BroadcastVariablesHook(tf.train.SessionRunHook):
     def __init__(self, dist, device=''):
         super().__init__()
         self.vars = dist.get_variables()
-        self.root_rank = ROOT_RANK
         self.bcast_op = None
         self.device = device
 
     def begin(self):
         if not self.bcast_op or self.bcast_op.graph != tf.get_default_graph():
             with tf.device(self.device):
-                self.bcast_op = safe_assign_vars(self.vars, default_bcast_func)
+                self.bcast_op = safe_assign_vars(self.vars, sgy.default_bcast_func)
 
     def after_create_session(self, session, coord):
         session.run(self.bcast_op)
@@ -89,15 +40,15 @@ from tensorflow.python.training.session_run_hook import SessionRunArgs
 from tensorflow.python.training.basic_session_run_hooks import _as_graph_element
 
 class CSVLoggingHook(session_run_hook.SessionRunHook):
-    def __init__(self, every_n_iter, train_tensors, test_tensors={}, get_test_fd=None, flush_every_n_iter=10):
+    def __init__(self, every_n_iter, train_tensors, test_tensors={}, get_test_fd=None, flush_every_n_iter=10, work_dir=None):
         self._train_dict = train_tensors
         self._test_dict = test_tensors
         self._get_test_fd = get_test_fd
         self._every_n_iter = every_n_iter
         self._flush_every_n_iter = flush_every_n_iter
         self._tag_order = list(self._train_dict.keys()) + list(self._test_dict.keys())
-        self._csv = None if WORK_DIR is None else \
-                    ut.file.CSVFile('master_stats.csv', WORK_DIR, ['time'] + self._tag_order, mode='w')
+        self._csv = None if work_dir is None else \
+                    ut.file.CSVFile('master_stats.csv', work_dir, ['time'] + self._tag_order, mode='w')
 
     def begin(self):
         self._iter_count = 0
@@ -125,11 +76,10 @@ class CSVLoggingHook(session_run_hook.SessionRunHook):
             if self._csv is not None: self._csv.writerow([time.time()-self._start_time] + stats, False)
 
             line = ', '.join(map(lambda a_,b_: '%s = %s'%(a_,b_), self._tag_order, stats))
-            if LOG_STATS:
-                if self._last_time is None: #tf.get_logger()
-                    log.info(line)
-                else:
-                    log.info('%s (%.3f sec)'%(line, time.time()-self._last_time))
+            if self._last_time is None: #tf.get_logger()
+                log.info(line)
+            else:
+                log.info('%s (%.3f sec)'%(line, time.time()-self._last_time))
 
             self._last_time = time.time()
 
@@ -155,19 +105,11 @@ def log_d(fmt, *args):
     op = tf.py_func(func=log.debug, inp=[fmt]+[*args], Tout=[])
     return tf.control_dependencies([op])
 
-def mpi_reduce_grads(grads, meta):
-    # https://mpitutorial.com/tutorials/mpi-scatter-gather-and-allgather/
-    # https://nyu-cds.github.io/python-mpi/05-collectives/
-    meta_ll = comm.gather(meta, root=0)
-    #total = comm.allreduce(num_samples, op=MPI.SUM)
-    for acc in grads:
-        # https://nyu-cds.github.io/python-mpi/05-collectives/
-        comm.Reduce(acc*(0. if rank()==0 else 1.), acc, op=MPI.SUM, root=0)
-    return meta_ll
-
 
 class Distributor:
     def __init__(self, node):
+        global log
+        log = sgy.log
         self._node = node
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
@@ -184,7 +126,7 @@ class Distributor:
         return self._node.set_strategy(strategy)
 
 
-log_col_names = ['num_samples', 'last_send', 'last_bcast', 'last_exit', 'sleep_time', 'compute_time']
+sgy.log_col_names = ['num_samples', 'last_send', 'last_bcast', 'last_exit', 'sleep_time', 'compute_time']
 
 class Master:#(tf.train.Optimizer):
     def __init__(self, optimizer):
@@ -195,7 +137,7 @@ class Master:#(tf.train.Optimizer):
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
-        default_bcast_func(*shapes)   ## send the variable shapes to workers
+        sgy.default_bcast_func(*shapes)   ## send the variable shapes to workers
         _, vars = zip(*grads_and_vars)
         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
             return vars, self.apply_gradients(grads_and_vars, global_step)
@@ -203,7 +145,7 @@ class Master:#(tf.train.Optimizer):
     def compute_gradients(self, placeholders, cr_sum_loss):
         grads_and_vars = self._optimizer.compute_gradients(cr_sum_loss(*placeholders))
         grads, vars = zip(*grads_and_vars)
-        if size() > 1:
+        if sgy.size() > 1:
             shapes, Tout = zip(*[(grad.shape.as_list(), grad.dtype) for grad in grads])
             self.wgrads = list(np.zeros(ss, dtype=tt.as_numpy_dtype) for ss,tt in zip(shapes,Tout))
             new_grads = tf.py_func(func=self.collect_grads_func, inp=[], Tout=Tout)
@@ -215,7 +157,7 @@ class Master:#(tf.train.Optimizer):
 
     def apply_gradients(self, grads_and_vars, global_step):
         apply_op = self._optimizer.apply_gradients(grads_and_vars, global_step)
-        if size()>1:
+        if sgy.size()>1:
             grads, vars = zip(*grads_and_vars)
             with tf.control_dependencies([apply_op]):
                 return safe_assign_vars(vars, self.strategy.broadcast_vars)
@@ -226,96 +168,6 @@ class Master:#(tf.train.Optimizer):
         for arr in self.wgrads: np.multiply(arr, 0., out=arr)
         self.strategy.collect_grads(self.wgrads)
         return self.wgrads
-
-
-class SynchronousMaster:
-    def __init__(self):
-        self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
-
-    def collect_grads(self, grads):
-        log.debug('Listening to [%d] workers', num_workers())
-        meta_ll = mpi_reduce_grads(grads, np.zeros(len(log_col_names)))
-        meta_ll = [arr.tolist() for arr in meta_ll[1:]]
-        total = sum(meta[0] for meta in meta_ll)
-        for acc in grads: np.divide(acc, total, out=acc)
-        with self.work as ww:
-            # mpi gather always ensures the rank order??
-            for i in range(num_workers()):
-                ww.on_result(meta_ll[i])
-
-    def broadcast_vars(self, *vars): return default_bcast_func(*vars)
-
-
-class SynchronousWorker:
-    def dispatch_grads(self, *args): return mpi_reduce_grads(*args)
-    def update_vars(self, *vars): return default_bcast_func(*vars)
-
-
-class Synchronous:
-    def make_master(self): return SynchronousMaster()
-    def make_worker(self): return SynchronousWorker()
-
-
-import pickle
-
-# mpi4py references
-# [1] https://github.com/thadikari/scripts/blob/master/tests/mpi4py/Ibcast_irecv.py
-# [2] https://github.com/mpi4py/mpi4py/blob/master/src/mpi4py/MPI/Comm.pyx
-# [3] https://stackoverflow.com/questions/10882581/mpi-isend-request-parameter
-
-class ReqMan:
-    def __init__(self, name=None): self.name, self.reqs = name, []
-    def add_clear(self, req):
-        self.reqs.append(req)
-        # test() returns (flag, msg) whereas Test() returns flag only. See reference [2].
-        # if Test() is true the resources are automatically freed as per [3].
-        # instead of storing requests, can also just free them as mentioned in [3].
-        self.reqs = [req for req in self.reqs if not req.Test()]
-        log.info('%s queue size [%d]', self.name if self.name else 'Requests', len(self.reqs))
-
-
-class AsynchronousMaster:
-    def __init__(self):
-        self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
-        self.reqman = ReqMan('BCAST')
-        self.buff = bytearray(1<<30)
-
-    def collect_grads(self, grads):
-        state = MPI.Status()
-        ngrads, meta = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
-        log.info('Incoming grads from [%d]', state.Get_source())
-        for ngrd,grd in zip(ngrads,grads): np.divide(ngrd, meta[0], out=grd)
-        with self.work as ww: ww.on_result(meta.tolist())
-
-    def broadcast_vars(self, *vars):
-        self.reqman.add_clear(comm.Ibcast(pickle.dumps(vars), root=ROOT_RANK))
-        return vars
-
-
-class AsynchronousWorker:
-    def __init__(self):
-        self.reqman = ReqMan('DISPATCH')
-        self.buff = bytearray(2**30)
-        self.new_req = lambda: comm.Ibcast(self.buff, root=ROOT_RANK)
-        self.bcast_req = self.new_req()
-
-    def dispatch_grads(self, grads, meta):
-        req = comm.isend((grads, meta), dest=ROOT_RANK)
-        self.reqman.add_clear(req)
-
-    def update_vars(self, *vars):
-        if self.bcast_req.Test():
-            ret = pickle.loads(self.buff)
-            self.bcast_req = self.new_req()
-            log.info('New broadcast from master!!')
-        else:
-            ret = vars
-        return ret
-
-
-class Asynchronous:
-    def make_master(self): return AsynchronousMaster()
-    def make_worker(self): return AsynchronousWorker()
 
 
 class Straggler:
@@ -336,10 +188,28 @@ class Straggler:
         time.sleep(self.sleep_time) # induced straggler sleeping time in secs
 
 
+class WorkerTag:
+    def __init__(self):
+        self.tags = collections.OrderedDict()
+        self.started = time.time()
+        self.curr = ''
+
+    def tag(self, name):
+        now = time.time()
+        elapsed = now-self.started
+        self.tags[self.curr] = elapsed
+        self.started = now
+        self.curr = name
+        return elapsed
+
+    def get(self, name):
+        return self.tags.get(name, -1)
+
+
 class Worker:
     def __init__(self, optimizer):
         self._optimizer = optimizer
-        self.prof = utils.WorkerTag()
+        self.prof = WorkerTag()
         self.straggler = None
 
     def set_straggler(self, induce_dist):
@@ -375,13 +245,13 @@ class Worker:
         # must send num_samples at the first position!!!!!!!
         # should be in the same order as log_col_names variable
         meta = np.array([num_samples, last_send, last_bcast, last_exit, sleep_time, compute_time])
-        meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(log_col_names, meta))
-        if LOG_STATS: log.info(meta_str)
+        meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(sgy.log_col_names, meta))
+        log.info(meta_str)
         self.strategy.dispatch_grads(grads, meta)
         self.prof.tag('bcast')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
-        shapes = default_bcast_func(None) ## get the variable shapes from master
+        shapes = sgy.default_bcast_func(None) ## get the variable shapes from master
         # this is necessary b/c as of now in AMBworker code cr_sum_loss() can only be
         # executed after knowing the shapes of the accumilating variables
         with ctrl_pyfunc(self.on_new_round_func, [], []):
@@ -451,10 +321,10 @@ class AnytimeMiniBatchWorker(Worker):
 
 class FixedMiniBatchDistributor(Distributor):
     def __init__(self, optimizer):
-        super().__init__(Master(optimizer) if rank()==0 else FixedMiniBatchWorker(optimizer))
+        super().__init__(Master(optimizer) if sgy.rank()==0 else FixedMiniBatchWorker(optimizer))
 
 
 class AnytimeMiniBatchDistributor(Distributor):
     def __init__(self, optimizer, *args, **kwargs):
-        super().__init__(Master(optimizer) if rank()==0 else
+        super().__init__(Master(optimizer) if sgy.rank()==0 else
                          AnytimeMiniBatchWorker(optimizer).init(*args, **kwargs))
