@@ -126,14 +126,14 @@ class Distributor:
         return self._node.set_strategy(strategy)
 
 
-sgy.log_col_names = ['num_samples', 'last_send', 'last_bcast', 'last_exit', 'sleep_time', 'compute_time']
+log_col_names = ['num_samples', 'last_send', 'last_recv', 'last_exit', 'sleep_time', 'compute_time']
 
 class Master:#(tf.train.Optimizer):
     def __init__(self, optimizer):
         self._optimizer = optimizer
 
     def set_straggler(self, *args): pass
-    def set_strategy(self, strategy): self.strategy = strategy.make_master()
+    def set_strategy(self, strategy): self.strategy = strategy.make_master(log_col_names)
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
@@ -238,17 +238,16 @@ class Worker:
     def dispatch_grads_func(self, num_samples, *grads):
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
-        last_bcast = self.prof.get('bcast')
+        last_recv = self.prof.get('recv')
         last_exit = self.prof.get('exit')
         sleep_time = self.straggler.sleep_time if self.straggler else 0.
         compute_time = self.prof.tag('send')
-        # must send num_samples at the first position!!!!!!!
         # should be in the same order as log_col_names variable
-        meta = np.array([num_samples, last_send, last_bcast, last_exit, sleep_time, compute_time])
-        meta_str = ', '.join('%s: %g'%(ar_)for ar_ in zip(sgy.log_col_names, meta))
+        meta = (num_samples, last_send, last_recv, last_exit, sleep_time, compute_time)
+        meta_str = ', '.join('%s: %g'%(ar_) for ar_ in zip(log_col_names, meta))
         log.info(meta_str)
-        self.strategy.dispatch_grads(grads, meta)
-        self.prof.tag('bcast')
+        self.strategy.dispatch_grads(grads, num_samples, meta)
+        self.prof.tag('recv')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes = sgy.default_bcast_func(None) ## get the variable shapes from master

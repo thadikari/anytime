@@ -31,6 +31,11 @@ def parse_args():
     parser.add_argument('--amb_time_limit', type=float)
     parser.add_argument('--amb_num_partitions', type=int)
 
+    parser.add_argument('--dist_sgy', help='distributed consensus strategy', choices=['syncr', 'async'], default='syncr')
+    parser.add_argument('--async_master', help='async master master waiting style', choices=['time', 'batch'], default='batch')
+    parser.add_argument('--async_master_time_limit', type=float, default=0.1)
+    parser.add_argument('--async_master_batch_min', type=int, default=4)
+
     parser.add_argument('--induce', help='induce stragglers', action='store_true')
     parser.add_argument('--dist', default=\
                                         # [[0, .1, 0.5], [1.5, .4, .4], [4, .5, .1]])
@@ -41,7 +46,7 @@ def parse_args():
     parser.add_argument('--extra', default=None, type=str)
     parser.add_argument('--no_stats', help='do not print stats', action='store_true')
     parser.add_argument('--log_freq', default=1, type=int)
-    parser.add_argument('--last_step', default=1000000, type=int)
+    parser.add_argument('--last_step', default=400000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
 
@@ -61,14 +66,18 @@ def parse_args():
 
 
 def main():
-    extra_line = '' if _a.extra is None else '__%s'%_a.extra
     amb_args = f'__{_a.amb_time_limit:g}_{_a.amb_num_partitions}' if _a.dist_opt=='amb' else ''
+    sgy_args = f'__{_a.dist_sgy}'
+    if _a.dist_sgy=='async':
+        if _a.async_master=='batch': ext_str = f'{_a.async_master_batch_min}'
+        elif _a.async_master=='time': ext_str = f'{_a.async_master_time_limit:g}'
+        sgy_args = f'{sgy_args}_{_a.async_master}_{ext_str}'
 
     sgy.init() # log_level=(not _a.no_stats))
     num_workers = sgy.num_workers()
     scheduler = ut.learningrate.lrate_scheduler(_a)(_a, _a.last_step)
     lrate_str = scheduler.to_str()
-    run_id = f'{_a.model}{extra_line}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}__{lrate_str}__{_a.induce}_{num_workers}'
+    run_id = f'{_a.model}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}{sgy_args}__{lrate_str}__{_a.induce}_{num_workers}'
     logs_dir = os.path.join(_a.data_dir, run_id)
     ds_args = {'batch_size':_a.batch_size, 'test_size':_a.test_size}
 
@@ -98,7 +107,15 @@ def main():
     elif _a.dist_opt == 'amb': dist = nds.AnytimeMiniBatchDistributor(opt,
                                       _a.amb_time_limit, _a.amb_num_partitions)
     if _a.induce: dist.set_straggler(induce_dist=_a.dist)
-    dist.set_strategy(sgy.Synchronous(work_dir=logs_dir))
+
+    if _a.dist_sgy=='syncr':
+        dist_sgy = sgy.Synchronous(work_dir=logs_dir)
+    elif _a.dist_sgy=='async':
+        dist_sgy = sgy.Asynchronous(work_dir=logs_dir,
+                master_style=_a.async_master,
+                master_batch_min=_a.async_master_batch_min,
+                master_time_limit=_a.async_master_time_limit)
+    dist.set_strategy(dist_sgy)
 
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
     accuracy, avg_loss = create_model_get_sum_loss.get_metrics()
