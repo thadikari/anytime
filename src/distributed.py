@@ -55,17 +55,14 @@ def size(): return comm.Get_size()
 def num_workers(): return size()-1
 
 
-def default_bcast_func(root_rank, *data):
-    log.debug('Broadcast from [%d], rank [%d]', root_rank, rank())
-    return comm.bcast(data, root=root_rank)
+def default_bcast_func(*data):
+    log.debug('Broadcast from [%d], rank [%d]', ROOT_RANK, rank())
+    return comm.bcast(data, root=ROOT_RANK)
 
-def broadcast(tensors, root_rank):
-    return tf.py_func(func=default_bcast_func, inp=[root_rank] + list(tensors),
-                      Tout=tuple(tensor.dtype for tensor in tensors))
-
-def broadcast_assign_vars(vars, root_rank):
+# py_func doesn't work on GPUs without casting
+def safe_assign_vars(vars, func):
     vars_cast = [tf.cast(tt, tf.float64) for tt in vars]
-    nvars = broadcast(vars_cast, root_rank)
+    nvars = tf.py_func(func=func, inp=vars_cast, Tout=tuple(tt.dtype for tt in vars_cast))
     nvars = [tf.cast(tt, tf.float32) for tt in nvars]
     return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
 
@@ -81,7 +78,7 @@ class BroadcastVariablesHook(tf.train.SessionRunHook):
     def begin(self):
         if not self.bcast_op or self.bcast_op.graph != tf.get_default_graph():
             with tf.device(self.device):
-                self.bcast_op = broadcast_assign_vars(self.vars, self.root_rank)
+                self.bcast_op = safe_assign_vars(self.vars, default_bcast_func)
 
     def after_create_session(self, session, coord):
         session.run(self.bcast_op)
@@ -198,7 +195,7 @@ class Master:#(tf.train.Optimizer):
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
-        default_bcast_func(ROOT_RANK, *shapes)   ## send the variable shapes to workers
+        default_bcast_func(*shapes)   ## send the variable shapes to workers
         _, vars = zip(*grads_and_vars)
         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
             return vars, self.apply_gradients(grads_and_vars, global_step)
@@ -221,7 +218,7 @@ class Master:#(tf.train.Optimizer):
         if size()>1:
             grads, vars = zip(*grads_and_vars)
             with tf.control_dependencies([apply_op]):
-                return broadcast_assign_vars(vars, 0)
+                return safe_assign_vars(vars, self.strategy.broadcast_vars)
         else:
             return apply_op
 
@@ -246,40 +243,75 @@ class SynchronousMaster:
             for i in range(num_workers()):
                 ww.on_result(meta_ll[i])
 
+    def broadcast_vars(self, *vars): return default_bcast_func(*vars)
+
 
 class SynchronousWorker:
     def dispatch_grads(self, *args): return mpi_reduce_grads(*args)
+    def update_vars(self, *vars): return default_bcast_func(*vars)
+
 
 class Synchronous:
     def make_master(self): return SynchronousMaster()
     def make_worker(self): return SynchronousWorker()
 
 
+import pickle
+
+# mpi4py references
+# [1] https://github.com/thadikari/scripts/blob/master/tests/mpi4py/Ibcast_irecv.py
+# [2] https://github.com/mpi4py/mpi4py/blob/master/src/mpi4py/MPI/Comm.pyx
+# [3] https://stackoverflow.com/questions/10882581/mpi-isend-request-parameter
+
+class ReqMan:
+    def __init__(self, name=None): self.name, self.reqs = name, []
+    def add_clear(self, req):
+        self.reqs.append(req)
+        # test() returns (flag, msg) whereas Test() returns flag only. See reference [2].
+        # if Test() is true the resources are automatically freed as per [3].
+        # instead of storing requests, can also just free them as mentioned in [3].
+        self.reqs = [req for req in self.reqs if not req.Test()]
+        log.info('%s queue size [%d]', self.name if self.name else 'Requests', len(self.reqs))
+
+
 class AsynchronousMaster:
     def __init__(self):
         self.work = utils.WorkerProfiler(5, log_col_names, WORK_DIR)
+        self.reqman = ReqMan('BCAST')
+        self.buff = bytearray(1<<30)
 
     def collect_grads(self, grads):
         state = MPI.Status()
-        ngrads, meta = comm.recv(source=MPI.ANY_SOURCE, status=state)
-        wk_ind = state.Get_source()
-        log.info('Received from worker [%d]', num_workers())
+        ngrads, meta = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
+        log.info('Incoming grads from [%d]', state.Get_source())
         for ngrd,grd in zip(ngrads,grads): np.divide(ngrd, meta[0], out=grd)
         with self.work as ww: ww.on_result(meta.tolist())
 
-class ReqMan:
-    def __init__(self): self.reqs = []
-    def add_clear(self, req):
-        req.wait(); return
-        self.reqs.append(req)
-        self.reqs = [req for req in self.reqs if not req.test()[0]]
-        log.info('Requests queue size [%d]', len(self.reqs))
+    def broadcast_vars(self, *vars):
+        self.reqman.add_clear(comm.Ibcast(pickle.dumps(vars), root=ROOT_RANK))
+        return vars
+
 
 class AsynchronousWorker:
-    def __init__(self): self.reqman = ReqMan()
+    def __init__(self):
+        self.reqman = ReqMan('DISPATCH')
+        self.buff = bytearray(2**30)
+        self.new_req = lambda: comm.Ibcast(self.buff, root=ROOT_RANK)
+        self.bcast_req = self.new_req()
+
     def dispatch_grads(self, grads, meta):
         req = comm.isend((grads, meta), dest=ROOT_RANK)
         self.reqman.add_clear(req)
+
+    def update_vars(self, *vars):
+        if self.bcast_req.Test():
+            ret = pickle.loads(self.buff)
+            self.bcast_req = self.new_req()
+            log.info('New broadcast from master!!')
+        else:
+            ret = vars
+        return ret
+
 
 class Asynchronous:
     def make_master(self): return AsynchronousMaster()
@@ -349,7 +381,7 @@ class Worker:
         self.prof.tag('bcast')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
-        shapes = default_bcast_func(ROOT_RANK, None) ## get the variable shapes from master
+        shapes = default_bcast_func(None) ## get the variable shapes from master
         # this is necessary b/c as of now in AMBworker code cr_sum_loss() can only be
         # executed after knowing the shapes of the accumilating variables
         with ctrl_pyfunc(self.on_new_round_func, [], []):
@@ -361,7 +393,7 @@ class Worker:
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
         with ctrl_pyfunc(self.dispatch_grads_func, inp=[num_samples]+list(grads), Tout=[]):
-            with ctrl_dep([broadcast_assign_vars(vars, 0), tf.assign_add(global_step, 1)]):
+            with ctrl_dep([safe_assign_vars(vars, self.strategy.update_vars), tf.assign_add(global_step, 1)]):
                 return py_exc(lambda:self.prof.tag('exit'))
 
 

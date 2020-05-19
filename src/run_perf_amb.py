@@ -36,7 +36,9 @@ def parse_args():
     parser.add_argument('--last_step', default=1000000, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
-    parser.add_argument('--master_cpu', action='store_true')
+
+    parser.add_argument('--cpu_master', help='master runs on CPU', action='store_true')
+    parser.add_argument('--gpu_master', help='only master runs on GPU', action='store_true')
 
     ut.learningrate.bind_learning_rates(parser)
     args = parser.parse_args()
@@ -63,9 +65,11 @@ def main():
     logs_dir = os.path.join(_a.data_dir, run_id)
     ds_args = {'batch_size':_a.batch_size, 'test_size':_a.test_size}
 
+    if (hvd.is_master() and _a.cpu_master) or (not hvd.is_master() and _a.gpu_master):
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
     if hvd.is_master():
         print('run_id: %s'%run_id)
-        if _a.master_cpu: os.environ['CUDA_VISIBLE_DEVICES'] = ''
         if logs_dir is not None:
             if not os.path.exists(logs_dir): os.makedirs(logs_dir)
             print('logs dir: %s'%logs_dir)
