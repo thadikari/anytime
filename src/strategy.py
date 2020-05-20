@@ -52,8 +52,9 @@ class FactoryBase:
     def __init__(self, work_dir): self.work_dir = work_dir
 
 class SynchronousFac(FactoryBase):
-    def make_master(self): return SynchronousMaster(self.work_dir)
-    def make_worker(self): return SynchronousWorker()
+    def make_master(self): return SynchronousMaster(self)
+    def make_worker(self): return SynchronousWorker(self)
+    def set_stats(self, stat_names): self.stat_names = ('num_samples', *stat_names)
 
 
 def default_bcast_func(*data):
@@ -69,16 +70,19 @@ def mpi_reduce_grads(grads, num_samples, stats):
 
 
 class MasterBase:
-    def __init__(self, work_dir): self.work_dir = work_dir
-    def init_stats_(self, stat_names):
-        self.work = WorkerProfiler(5, stat_names, self.work_dir)
-        return self
+    def __init__(self, fac):
+        self.work = WorkerProfiler(5, fac.stat_names, fac.work_dir)
+        self.fac = fac
+
+class WorkerBase:
+    def __init__(self, fac):
+        self.fac = fac
+
+    def print_stats(self, stats):
+        log.info(', '.join(f'{nn}:{vv:g}' for nn,vv in zip(self.fac.stat_names, stats)))
+
 
 class SynchronousMaster(MasterBase):
-    def init_stats(self, stat_names):
-        s_ = ('num_samples', *stat_names)
-        return self.init_stats_(s_)
-
     def collect_grads(self, step, grads):
         log.debug('Listening to [%d] workers', num_workers())
         total, stats_ll = mpi_reduce_grads(grads, 0., None)
@@ -93,9 +97,10 @@ class SynchronousMaster(MasterBase):
     def send_update(self, _, *vars): return default_bcast_func(*vars)
 
 
-class SynchronousWorker:
+class SynchronousWorker(WorkerBase):
     def send_grads(self, _, grads, num_samples, stats):
         stats = (num_samples, *stats)
+        self.print_stats(stats)
         return mpi_reduce_grads(grads, num_samples, stats)
     def receive_update(self, _, *vars): return default_bcast_func(*vars)
 
@@ -109,11 +114,14 @@ class AsynchronousFac(FactoryBase):
         def make_master():
             if style=='batch': ch = AsyncMasterBatch(batch_min)
             elif style=='time': ch = AsyncMasterTime(time_limit)
-            return AsynchronousMaster(self.work_dir).set_checker(ch)
+            return AsynchronousMaster(self).set_checker(ch)
 
         self.make_master = make_master
 
-    def make_worker(self): return AsynchronousWorker()
+    def make_worker(self): return AsynchronousWorker(self).init()
+
+    def set_stats(self, stat_names):
+        self.stat_names = ('worker_step', 'worker_master_step', 'num_samples', *stat_names)
 
 
 class ReqMan:
@@ -166,10 +174,6 @@ class AsyncMasterTime:
 
 
 class AsynchronousMaster(MasterBase):
-    def init_stats(self, stat_names):
-        s_ = ('worker_step', 'worker_master_step', 'num_samples', *stat_names)
-        return self.init_stats_(s_)
-
     def set_checker(self, checker):
         self.reqman = ReqMan('MASTER')
         # self.buff = bytearray(1<<30)
@@ -198,15 +202,17 @@ class AsynchronousMaster(MasterBase):
         return vars
 
 
-class AsynchronousWorker:
-    def __init__(self):
+class AsynchronousWorker(WorkerBase):
+    def init(self):
         self.reqman = ReqManMax1('WORKER')
         self.last_master_step = 0
+        return self
 
     def send_grads(self, step, grads, num_samples, stats):
         stats = (step, self.last_master_step, num_samples, *stats)
         req = comm.isend((grads, num_samples, stats), dest=ROOT_RANK)
         self.reqman.add(req)
+        self.print_stats(stats)
 
     def receive_update(self, _, *vars):
         ret, count = vars, 0

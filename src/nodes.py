@@ -124,6 +124,7 @@ class Distributor:
         return self._node.set_straggler(induce_dist)
 
     def set_strategy(self, strategy):
+        strategy.set_stats(stat_names)
         return self._node.set_strategy(strategy)
 
 
@@ -134,7 +135,7 @@ class Master:#(tf.train.Optimizer):
         self._optimizer = optimizer
 
     def set_straggler(self, *args): pass
-    def set_strategy(self, strategy): self.strategy = strategy.make_master().init_stats(stat_names)
+    def set_strategy(self, strategy): self.strategy = strategy.make_master()
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
         shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss, global_step)
