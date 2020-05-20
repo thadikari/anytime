@@ -12,9 +12,10 @@ log = None
 
 
 # py_func doesn't work on GPUs without casting
-def safe_assign_vars(vars, func):
+def safe_assign_vars(vars, func, arg=None):
     vars_cast = [tf.cast(tt, tf.float64) for tt in vars]
-    nvars = tf.py_func(func=func, inp=vars_cast, Tout=tuple(tt.dtype for tt in vars_cast))
+    inputs = vars_cast if arg is None else (arg, *vars_cast)
+    nvars = tf.py_func(func=func, inp=inputs, Tout=tuple(tt.dtype for tt in vars_cast))
     nvars = [tf.cast(tt, tf.float32) for tt in nvars]
     return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
 
@@ -126,29 +127,29 @@ class Distributor:
         return self._node.set_strategy(strategy)
 
 
-log_col_names = ['num_samples', 'last_send', 'last_recv', 'last_exit', 'sleep_time', 'compute_time']
+stat_names = ('last_send', 'last_recv', 'last_exit', 'sleep_time', 'compute_time')
 
 class Master:#(tf.train.Optimizer):
     def __init__(self, optimizer):
         self._optimizer = optimizer
 
     def set_straggler(self, *args): pass
-    def set_strategy(self, strategy): self.strategy = strategy.make_master(log_col_names)
+    def set_strategy(self, strategy): self.strategy = strategy.make_master().init_stats(stat_names)
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
-        shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss)
+        shapes, grads_and_vars = self.compute_gradients(placeholders, cr_sum_loss, global_step)
         sgy.default_bcast_func(*shapes)   ## send the variable shapes to workers
         _, vars = zip(*grads_and_vars)
         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
             return vars, self.apply_gradients(grads_and_vars, global_step)
 
-    def compute_gradients(self, placeholders, cr_sum_loss):
+    def compute_gradients(self, placeholders, cr_sum_loss, global_step):
         grads_and_vars = self._optimizer.compute_gradients(cr_sum_loss(*placeholders))
         grads, vars = zip(*grads_and_vars)
         if sgy.size() > 1:
             shapes, Tout = zip(*[(grad.shape.as_list(), grad.dtype) for grad in grads])
             self.wgrads = list(np.zeros(ss, dtype=tt.as_numpy_dtype) for ss,tt in zip(shapes,Tout))
-            new_grads = tf.py_func(func=self.collect_grads_func, inp=[], Tout=Tout)
+            new_grads = tf.py_func(func=self.collect_grads_func, inp=[global_step], Tout=Tout)
         else:
             batch_size = tf.dtypes.cast(tf.shape(placeholders[0])[0], tf.float32)
             new_grads = [grad/batch_size for grad in grads]
@@ -160,13 +161,13 @@ class Master:#(tf.train.Optimizer):
         if sgy.size()>1:
             grads, vars = zip(*grads_and_vars)
             with tf.control_dependencies([apply_op]):
-                return safe_assign_vars(vars, self.strategy.broadcast_vars)
+                return safe_assign_vars(vars, self.strategy.send_update, global_step)
         else:
             return apply_op
 
-    def collect_grads_func(self):
+    def collect_grads_func(self, step):
         for arr in self.wgrads: np.multiply(arr, 0., out=arr)
-        self.strategy.collect_grads(self.wgrads)
+        self.strategy.collect_grads(step, self.wgrads)
         return self.wgrads
 
 
@@ -235,18 +236,16 @@ class Worker:
         compute new grads (compute_time also includes sleep_time)
         send the new grads (the time for this will be sent with the next update)
     '''
-    def dispatch_grads_func(self, num_samples, *grads):
+    def send_grads_func(self, step, num_samples, *grads):
         # self.log.debug('Sending summed_grads for [%d] batches', num_batches)
         last_send = self.prof.get('send')
         last_recv = self.prof.get('recv')
         last_exit = self.prof.get('exit')
         sleep_time = self.straggler.sleep_time if self.straggler else 0.
         compute_time = self.prof.tag('send')
-        # should be in the same order as log_col_names variable
-        meta = (num_samples, last_send, last_recv, last_exit, sleep_time, compute_time)
-        meta_str = ', '.join('%s: %g'%(ar_) for ar_ in zip(log_col_names, meta))
-        log.info(meta_str)
-        self.strategy.dispatch_grads(grads, num_samples, meta)
+        # should be in the same order as stat_names variable
+        stats = (last_send, last_recv, last_exit, sleep_time, compute_time)
+        self.strategy.send_grads(step, grads, num_samples, stats)
         self.prof.tag('recv')
 
     def minimize(self, placeholders, cr_sum_loss, global_step):
@@ -261,9 +260,11 @@ class Worker:
 
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
-        with ctrl_pyfunc(self.dispatch_grads_func, inp=[num_samples]+list(grads), Tout=[]):
-            with ctrl_dep([safe_assign_vars(vars, self.strategy.update_vars), tf.assign_add(global_step, 1)]):
-                return py_exc(lambda:self.prof.tag('exit'))
+        with ctrl_pyfunc(self.send_grads_func, inp=(global_step, num_samples, *grads), Tout=[]):
+            assign_op = safe_assign_vars(vars, self.strategy.receive_update, global_step)
+            with ctrl_dep([assign_op]):
+                with ctrl_dep([tf.assign_add(global_step, 1)]):
+                    return py_exc(lambda:self.prof.tag('exit'))
 
 
 class FixedMiniBatchWorker(Worker):

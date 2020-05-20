@@ -48,9 +48,11 @@ def num_workers(): return size()-1
 
 ###############################################################################
 
-class Synchronous:
+class FactoryBase:
     def __init__(self, work_dir): self.work_dir = work_dir
-    def make_master(self, csv_cols): return SynchronousMaster(csv_cols, self.work_dir)
+
+class SynchronousFac(FactoryBase):
+    def make_master(self): return SynchronousMaster(self.work_dir)
     def make_worker(self): return SynchronousWorker()
 
 
@@ -58,46 +60,56 @@ def default_bcast_func(*data):
     log.debug('Broadcast from [%d], rank [%d]', ROOT_RANK, rank())
     return comm.bcast(data, root=ROOT_RANK)
 
-def mpi_reduce_grads(grads, num_samples, meta):
-    meta_ll = comm.gather(meta, root=ROOT_RANK) # reference [4,5]
+def mpi_reduce_grads(grads, num_samples, stats):
+    stats_ll = comm.gather(stats, root=ROOT_RANK) # reference [4,5]
     total = comm.reduce(num_samples, op=MPI.SUM, root=ROOT_RANK)
     for acc in grads: # reference [6]
         comm.Reduce(acc*(0. if rank()==0 else 1.), acc, op=MPI.SUM, root=ROOT_RANK)
-    return total, meta_ll
+    return total, stats_ll
 
 
 class MasterBase:
-    def __init__(self, csv_cols, work_dir):
-        self.work = WorkerProfiler(5, csv_cols, work_dir)
+    def __init__(self, work_dir): self.work_dir = work_dir
+    def init_stats_(self, stat_names):
+        self.work = WorkerProfiler(5, stat_names, self.work_dir)
+        return self
 
 class SynchronousMaster(MasterBase):
-    def collect_grads(self, grads):
-        log.debug('Listening to [%d] workers', num_workers())
-        total, meta_ll = mpi_reduce_grads(grads, 0., None)
-        for acc in grads: np.divide(acc, total, out=acc)
-        with self.work as ww:
-            # mpi gather always ensures the rank order?? Yes as per [4]
-            for i in range(num_workers()): ww.on_result(meta_ll[i+1])
-            # i+1 to skip master
+    def init_stats(self, stat_names):
+        s_ = ('num_samples', *stat_names)
+        return self.init_stats_(s_)
 
-    def broadcast_vars(self, *vars): return default_bcast_func(*vars)
+    def collect_grads(self, step, grads):
+        log.debug('Listening to [%d] workers', num_workers())
+        total, stats_ll = mpi_reduce_grads(grads, 0., None)
+        for acc in grads: np.divide(acc, total, out=acc)
+
+        self.work.reset(step)
+        for i in range(num_workers()):
+            # mpi gather always ensures the rank order?? Yes as per [4]
+            rank = i+1   # skip master
+            self.work.on_result(rank, stats_ll[rank])
+
+    def send_update(self, _, *vars): return default_bcast_func(*vars)
 
 
 class SynchronousWorker:
-    def dispatch_grads(self, *args): return mpi_reduce_grads(*args)
-    def update_vars(self, *vars): return default_bcast_func(*vars)
+    def send_grads(self, _, grads, num_samples, stats):
+        stats = (num_samples, *stats)
+        return mpi_reduce_grads(grads, num_samples, stats)
+    def receive_update(self, _, *vars): return default_bcast_func(*vars)
 
 
 
 
 ###############################################################################
 
-class Asynchronous:
-    def __init__(self, master_style, master_batch_min, master_time_limit, work_dir):
-        def make_master(csv_cols):
-            if master_style=='batch': ch = AsyncMasterBatch(master_batch_min)
-            elif master_style=='time': ch = AsyncMasterTime(master_time_limit)
-            return AsynchronousMaster(csv_cols, work_dir).init(ch)
+class AsynchronousFac(FactoryBase):
+    def master_args(self, style, batch_min, time_limit):
+        def make_master():
+            if style=='batch': ch = AsyncMasterBatch(batch_min)
+            elif style=='time': ch = AsyncMasterTime(time_limit)
+            return AsynchronousMaster(self.work_dir).set_checker(ch)
 
         self.make_master = make_master
 
@@ -154,48 +166,56 @@ class AsyncMasterTime:
 
 
 class AsynchronousMaster(MasterBase):
-    def init(self, checker):
-        self.reqman = ReqMan('BCAST')
+    def init_stats(self, stat_names):
+        s_ = ('worker_step', 'worker_master_step', 'num_samples', *stat_names)
+        return self.init_stats_(s_)
+
+    def set_checker(self, checker):
+        self.reqman = ReqMan('MASTER')
         # self.buff = bytearray(1<<30)
         self.checker = checker
         return self
 
-    def collect_grads(self, grads):
+    def collect_grads(self, step, grads):
         total = 0
         self.checker.reset()
         while self.checker.should_wait():
             state = MPI.Status()
-            ngrads, num_samples, meta = comm.recv(source=MPI.ANY_SOURCE, status=state)
-            # ngrads, meta = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
+            ngrads, num_samples, stats = comm.recv(source=MPI.ANY_SOURCE, status=state)
+            # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
             total += num_samples
-            log.info('Incoming grads from [%d], num_samples [%d]', state.Get_source(), num_samples)
-            with self.work as ww: ww.on_result(meta)
+            rank = state.Get_source()
+            log.info('Incoming grads from [%d], num_samples [%d]', rank, num_samples)
+            self.work.reset(step)
+            self.work.on_result(rank, stats)
             for ngrd,grd in zip(ngrads,grads): np.add(grd, ngrd, out=grd)
         # log.info('MASTER EXIT [%d]', total)
         for grd in grads: np.divide(grd, total, out=grd)
 
-    def broadcast_vars(self, *vars):
-        reqs = [comm.isend(vars, dest=i+1) for i in range(num_workers())]
+    def send_update(self, step, *vars):
+        reqs = [comm.isend((step, vars), dest=i+1) for i in range(num_workers())]
         self.reqman.addn(reqs)
         return vars
 
 
 class AsynchronousWorker:
     def __init__(self):
-        self.reqman = ReqManMax1('DISPATCH')
+        self.reqman = ReqManMax1('WORKER')
+        self.last_master_step = 0
 
-    def dispatch_grads(self, *args):
-        req = comm.isend(args, dest=ROOT_RANK)
+    def send_grads(self, step, grads, num_samples, stats):
+        stats = (step, self.last_master_step, num_samples, *stats)
+        req = comm.isend((grads, num_samples, stats), dest=ROOT_RANK)
         self.reqman.add(req)
 
-    def update_vars(self, *vars):
+    def receive_update(self, _, *vars):
         ret, count = vars, 0
         # check for the latest update
         while comm.Iprobe(source=ROOT_RANK):
-            ret = comm.recv(source=ROOT_RANK)
+            self.last_master_step, ret = comm.recv(source=ROOT_RANK)
             count += 1
         if count>0:
-            log.info('New update from master! Iprobe count [%d]', count)
+            log.info('Master update! Iprobe count [%d]', count)
         else:
             log.info('No update! Master lagging!')
         return ret
@@ -207,35 +227,21 @@ class AsynchronousWorker:
 
 class WorkerProfiler:
     def __init__(self, dump_freq, columns, work_dir=None):
-        self.reset()
-        self.step_count = 0
+        self.ref_time = time.time()
         self.dump_freq = dump_freq
-        self.csv = None if (work_dir is None) else \
-                   ut.file.CSVFile('worker_stats.csv', work_dir, \
-                           ['time', 'step'] + columns + ['compute_time_master'], mode='w')
+        col_names = ('time', 'master_step', 'rank', *columns, 'compute_time_master')
+        self.csv = ut.file.CSVFile('worker_stats.csv', work_dir, col_names, mode='w')
 
-    def reset(self):
-        self.cache = []
-
-    def __enter__(self):
-        if self.step_count==0: self.training_started = time.time()
+    def reset(self, master_step):
+        if master_step%self.dump_freq==0: self.csv.flush()
         self.round_started = time.time()
-        self.step_count += 1
-        return self
+        self.master_step = master_step
 
-    def on_result(self, data):
+    def on_result(self, rank, stats):
         curr = time.time()
-        elapsed_total = curr - self.training_started
+        elapsed_total = curr - self.ref_time
         compute_time_master = curr - self.round_started
-        self.cache.append([elapsed_total, self.step_count] + list(data) + [compute_time_master])
+        ndata = (elapsed_total, self.master_step, rank, *stats, compute_time_master)
+        self.csv.writerow(ndata)
 
-    def __exit__(self, type, value, traceback):
-        if self.step_count%self.dump_freq==0: self.dump_all()
-
-    def dump_all(self):
-        if self.csv is not None:
-            for it in self.cache: self.csv.writerow(it)
-            self.csv.flush()
-            self.reset()
-
-    def __del__(self): self.dump_all()
+    def __del__(self): self.csv.flush()

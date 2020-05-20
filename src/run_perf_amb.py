@@ -12,12 +12,15 @@ import models
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
+
 opt_reg = utilities.Registry()
 _r = opt_reg.put
 _r('rms', tf.train.RMSPropOptimizer)
 _r('adm', tf.train.AdamOptimizer)
 _r('sgd', tf.train.GradientDescentOptimizer)
 _r('mom', lambda lr_: tf.train.MomentumOptimizer(lr_, momentum=0.9))
+
+sgy_reg = {'syncr':sgy.SynchronousFac, 'async':sgy.AsynchronousFac}
 
 
 def parse_args():
@@ -31,7 +34,7 @@ def parse_args():
     parser.add_argument('--amb_time_limit', type=float)
     parser.add_argument('--amb_num_partitions', type=int)
 
-    parser.add_argument('--dist_sgy', help='distributed consensus strategy', choices=['syncr', 'async'], default='syncr')
+    parser.add_argument('--dist_sgy', help='distributed consensus strategy', choices=sgy_reg.keys(), default='syncr')
     parser.add_argument('--async_master', help='async master master waiting style', choices=['time', 'batch'], default='batch')
     parser.add_argument('--async_master_time_limit', type=float, default=0.1)
     parser.add_argument('--async_master_batch_min', type=int, default=4)
@@ -108,13 +111,9 @@ def main():
                                       _a.amb_time_limit, _a.amb_num_partitions)
     if _a.induce: dist.set_straggler(induce_dist=_a.dist)
 
-    if _a.dist_sgy=='syncr':
-        dist_sgy = sgy.Synchronous(work_dir=logs_dir)
-    elif _a.dist_sgy=='async':
-        dist_sgy = sgy.Asynchronous(work_dir=logs_dir,
-                master_style=_a.async_master,
-                master_batch_min=_a.async_master_batch_min,
-                master_time_limit=_a.async_master_time_limit)
+    dist_sgy = sgy_reg[_a.dist_sgy](work_dir=logs_dir)
+    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master,
+        batch_min=_a.async_master_batch_min, time_limit=_a.async_master_time_limit)
     dist.set_strategy(dist_sgy)
 
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
