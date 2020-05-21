@@ -121,7 +121,7 @@ class AsynchronousFac(FactoryBase):
     def make_worker(self): return AsynchronousWorker(self).init()
 
     def set_stats(self, stat_names):
-        self.stat_names = ('worker_step', 'worker_master_step', 'num_samples', *stat_names)
+        self.stat_names = ('worker_step', 'worker_master_step', 'last_queued_update_count', 'num_samples', *stat_names)
 
 
 class ReqMan:
@@ -205,28 +205,47 @@ class AsynchronousMaster(MasterBase):
 class AsynchronousWorker(WorkerBase):
     def init(self):
         self.reqman = ReqManMax1('WORKER')
+        self.recman = WorkerReceiveMan()
         self.last_master_step = 0
+        self.lquc = 0
         return self
 
     def send_grads(self, step, grads, num_samples, stats):
-        stats = (step, self.last_master_step, num_samples, *stats)
+        stats = (step, self.last_master_step, self.lquc, num_samples, *stats)
         req = comm.isend((grads, num_samples, stats), dest=ROOT_RANK)
         self.reqman.add(req)
         self.print_stats(stats)
 
     def receive_update(self, _, *vars):
-        ret, count = vars, 0
-        # check for the latest update
-        while comm.Iprobe(source=ROOT_RANK):
-            self.last_master_step, ret = comm.recv(source=ROOT_RANK)
-            count += 1
-        if count>0:
-            log.info('Master update! Iprobe count [%d]', count)
-        else:
+        data, self.lquc = self.recman.get_latest()
+        if data is None:
+            assert(self.lquc==0)
             log.info('No update! Master lagging!')
-        return ret
+            return vars
+        else:
+            log.info('Master update! Queued count [%d]', self.lquc)
+            self.last_master_step, ret = data
+            return ret
 
 
+class WorkerReceiveMan:
+    def __init__(self):
+        self.newreq = lambda: comm.irecv(bytearray(1<<26), source=ROOT_RANK)
+        self.reqs = [self.newreq() for i in range(10)]
+
+    def get_latest(self):
+        ret_data, count = None, 0
+        while 1:
+            # assumption: self.reqs[i] is completed
+            # before self.reqs[i+k] for any i,k
+            flag, data = self.reqs[0].test()
+            if flag:
+                self.reqs.append(self.newreq())
+                self.reqs.pop(0).wait()
+                ret_data = data
+                count += 1
+            else: break
+        return ret_data, count
 
 
 ###############################################################################

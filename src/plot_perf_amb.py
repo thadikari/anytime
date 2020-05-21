@@ -15,6 +15,7 @@ import utilities.file
 
 plt.style.use('classic')
 utils.init(20, legend_font_size=18, tick_size=16)
+set_x_sci = lambda ax_: ax_.ticklabel_format(style='sci', axis='x', scilimits=(0,3))
 
 def proc_csv(file_path):
     try:
@@ -87,27 +88,53 @@ def bandwidth_(data, ax_):
     ax_.grid(True, which='both')
     ax_.set_xlim([min(numw)-1, max(numw)+1])
 
-def hist_(data, ax_, key, x_label, binwidth=None):
-    ylim = 0
-    for root in data:
-        dd = root.worker_data
-        arr = dd.get(key, [])
-        if len(arr):
-            if callable(binwidth): binwidth = binwidth(root.args)
-            bins = np.arange(min(arr), max(arr) + binwidth, binwidth)
-            if (len(bins))==1: bins = [bins[0]-binwidth, bins[0]]
+def hist_(data, ax_, key, x_label, binwidth=None, is_time=True):
+    if not callable(key):
+        data_list = list(root for root in data if key in root.worker_data)
+    else: data_list = data
+    if is_time:
+        xmax = max(np.amax(root.worker_data[key]) for root in data_list)
+        div,_, x_label = utils.get_best_time_scale(xmax, x_label)
+        binwidth /= div
+    else: div = 1
 
-            n, bins, patches = ax_.hist(arr, bins=bins, alpha=.5, color=root.get_color(), label=root.get_label())
-            #(n!=0).argmax()
-            #if len(bins)>5:
-            ylim = max(ylim, max(n))
-    ax_.set_ylim([0, ylim])
-    ax_.set_yticks([])
+    freq_ll, bins_ll = [], []
+    for root in data_list:
+        # if not key in root.worker_data: continue
+        if callable(key):
+            arr = key(root)
+            if arr is None: continue
+        else:
+            arr = root.worker_data[key]
+            arr = arr[arr>=0]/div
+        bins = np.arange(min(arr), max(arr) + binwidth, binwidth)
+        if (len(bins))<10:
+            mid_val = bins[abs(int(len(bins)/2.))]
+            bins = mid_val + (np.arange(10)-4)*binwidth
+        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.5, color=root.get_color(), label=root.get_label())
+        freq_ll.append(freq)
+        bins_ll.append(bins)
+
+    def get_xlims_(freq, bins):
+        avg_freq = np.max(freq)  # np.mean(freq[freq>0])
+        valid = (freq > avg_freq*_a.outlier_threshold).nonzero()[0]
+        return bins[valid[0]]-3*binwidth, bins[valid[-1]]+6*binwidth
+
+    if _a.remove_hist_outliers:
+        mins, maxs = zip(*[get_xlims_(*its) for its in zip(freq_ll, bins_ll)])
+        xmin, xmax = min(mins), max(maxs)
+        ax_.set_xlim([xmin, xmax])
+    else:
+        xmax = max(bins.max() for bins in bins_ll)
+
+    # if is_time: _, x_label = utils.set_best_time_scale(ax_, xmax, x_label)
+    if _a.ylog or _a.hist_ylog: ax_.set_yscale('log')
+    else: ax_.set_yticks([])
     utils.fmt_ax(ax_, x_label, 'Frequency', leg=1)
 
 def cum_(data, ax_):
     ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
-    x_key, y_key, x_label, y_label = 'step', 'num_samples', 'Step', 'Cumulative sum of examples'
+    x_key, y_key, x_label, y_label = 'master_step', 'num_samples', 'Step', 'Cumulative sum of examples'
     for root in data:
         dd = root.worker_data
         if y_key not in dd: continue
@@ -119,15 +146,37 @@ def cum_(data, ax_):
                                linewidth=1.5, label=root.get_label())
     utils.fmt_ax(ax_, x_label, y_label, leg=1)
     ax_.grid(True, which='both')
+    set_x_sci(ax_)
 
+
+@plt_ax.reg
+def hist_exit(*args):
+    return hist_(*args, 'last_exit', 'Time between worker iterations', binwidth=0.01)
+
+@plt_ax.reg
+def hist_send(*args):
+    return hist_(*args, 'last_send', 'Worker gradients send time', binwidth=0.01)
+
+@plt_ax.reg
+def hist_recv(*args):
+    return hist_(*args, 'last_recv', 'Master update receive time', binwidth=0.01)
 
 @plt_ax.reg
 def hist_compute_time(*args):
-    return hist_(*args, 'compute_time', 'Computation time (s)', binwidth=_a.binwidth_time)
+    return hist_(*args, 'compute_time', 'Computation time', binwidth=_a.binwidth_time)
 
 @plt_ax.reg
 def hist_batch_size(*args):
-    return hist_(*args, 'num_samples', 'Batch size', binwidth=_a.binwidth_batch)
+    return hist_(*args, 'num_samples', 'Batch size', binwidth=_a.binwidth_batch, is_time=False)
+
+@plt_ax.reg
+def hist_staleness(*args):
+    def c_(root):
+        if root.args['dist_sgy']=='async':
+            data = root.worker_data
+            return data['master_step'] - data['worker_master_step']
+        else: return None
+    return hist_(*args, c_, 'Master step - worker\'s master step', binwidth=1, is_time=False)
 
 @plt_ax.reg
 def cumsum_vs_step(*args):
@@ -143,7 +192,7 @@ def plot_(data, ax_, x_key, y_key, x_label, y_label, filter=True, ysci=False):
         xmax = max(np.max(root.master_data[x_key]) for root in data)
         div,_, x_label = utils.get_best_time_scale(xmax, x_label)
     else:
-        ax_.ticklabel_format(style='sci', axis='x', scilimits=(0,3))
+        set_x_sci(ax_)
         div = 1
 
     if ysci: ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
@@ -153,7 +202,9 @@ def plot_(data, ax_, x_key, y_key, x_label, y_label, filter=True, ysci=False):
         y_val = dd[y_key][:num_ele]
         if filter and _a.filter_sigma:
             y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
-        ax_.plot(dd[x_key][:num_ele]/div, y_val, color=root.get_color(),
+        xval = dd[x_key][:num_ele]/div
+        if x_key=='time': xval -= min(xval) 
+        ax_.plot(xval, y_val, color=root.get_color(),
                                 linewidth=1.5, label=root.get_label())
     utils.fmt_ax(ax_, x_label, y_label, leg=1)
     if _a.ylog: ax_.set_yscale('log')
@@ -176,7 +227,7 @@ def loss_vs_step(*args):
     return plot_(*args, 'step', 'loss', 'Step', 'Training loss')
 
 @plt_ax.reg
-def time_vs_step(*args):
+def step_vs_time(*args):
     return plot_(*args, 'time', 'step', 'Wall clock time', 'Step', filter=False, ysci=True)
 
 @plt_ax.reg
@@ -186,15 +237,26 @@ def learning_rate_vs_step(*args):
 @plt_ax.reg
 def distribution(data, ax_):
     dd = data[0].args['dist']
-    means, std_devs, weights = zip(*dd)
-    y_ = lambda x_: sum(w*stats.norm.pdf(x_, mu, sigma) for mu, sigma, w in dd if sigma!=0)
-    x = np.linspace(1e-3, 8, 500)
-    y = y_(x) + y_(-x)          # take absolute values for negative values
-    ax_.fill_between(x, 0, y)   # label='Expected value ~=%g'%(x@y/sum(y)))
-    ax_.set_xlim([0, max(x)])
-    # ax_.ylim([0, 0.0015])
+    xmax = max(mu+sigma*5 for mu,sigma,_ in dd)
+    x = np.linspace(0, xmax, 500)
+    y_ = lambda x_: sum(w*stats.norm.pdf(x_, mu, sigma) for mu,sigma,w in dd if sigma!=0)
+    y = y_(x) + y_(-x)
+    # if absolute value taken for negative values this is the resulting pdf
+    div,_, x_label = utils.get_best_time_scale(xmax, 'Induced delay')
+    x /= div
+    ax_.fill_between(x, 0, y, color='tan')   # label='Expected value ~=%g'%(x@y/sum(y)))
+
+    ymax = max(y)
+    for mu,sigma,w in dd:
+        if sigma==0:
+            ax_.arrow(mu,0,0,ymax*1.2, head_width=0.08, head_length=0.03, linewidth=3, color='k')
+            ax_.annotate(f'{w:g}', xy=(mu,ymax*1.3), ha='left')
+
+    delta = (max(x)-min(x))*0.02
+    ax_.set_xlim([min(x)-delta, max(x)+delta])
+    ax_.set_ylim([0, ymax*1.5])
     ax_.set_yticks([])
-    utils.fmt_ax(ax_, 'Induced delay (s)', 'PDF', 0)
+    utils.fmt_ax(ax_, x_label, 'PDF', 0)
 
 
 #########################
@@ -224,9 +286,9 @@ def master_bandwidth(data, sv_):
     sv_()
 
 
-all_plots_ll = (distribution, hist_compute_time, hist_batch_size,
-               loss_vs_time, accuracy_vs_time, cumsum_vs_step,
-               loss_vs_step, learning_rate_vs_step, time_vs_step)
+all_plots_ll = (loss_vs_step, loss_vs_time, hist_compute_time,
+                accuracy_vs_step, accuracy_vs_time, hist_batch_size,
+                cumsum_vs_step, step_vs_time, learning_rate_vs_step)
 
 @plt_fig.reg
 def all_plots(data, sv_):
@@ -262,8 +324,13 @@ def parse_args():
     parser.add_argument('--type', default='all_plots', choices=plt_fig.keys())
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
 
+    ## histogram-related arguments
     parser.add_argument('--binwidth_time', type=float, default=0.01)
     parser.add_argument('--binwidth_batch', type=float, default=1)
+    parser.add_argument('--hist_ylog', action='store_true')
+    parser.add_argument('--remove_hist_outliers', action='store_true')
+    parser.add_argument('--outlier_threshold', type=float, default=0.00005)
+
     parser.add_argument('--short_label', action='store_true')
     parser.add_argument('--resub', action='append', nargs=2, metavar=('pattern','substitute'))
 
