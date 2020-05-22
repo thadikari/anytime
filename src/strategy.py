@@ -102,7 +102,8 @@ class SynchronousWorker(WorkerBase):
         stats = (num_samples, *stats)
         self.print_stats(stats)
         return mpi_reduce_grads(grads, num_samples, stats)
-    def receive_update(self, _, *vars): return default_bcast_func(*vars)
+    def is_update_ready(self): return True
+    def receive_update(self): return default_bcast_func(None)
 
 
 
@@ -208,6 +209,7 @@ class AsynchronousWorker(WorkerBase):
         self.recman = WorkerReceiveMan()
         self.last_master_step = 0
         self.lquc = 0
+        self.data_ready = None
         return self
 
     def send_grads(self, step, grads, num_samples, stats):
@@ -216,16 +218,22 @@ class AsynchronousWorker(WorkerBase):
         self.reqman.add(req)
         self.print_stats(stats)
 
-    def receive_update(self, _, *vars):
+    def receive_update(self):
+        ret = self.data_ready
+        self.data_ready = None
+        return ret
+
+    def is_update_ready(self):
+        assert(self.data_ready==None)
         data, self.lquc = self.recman.get_latest()
         if data is None:
             assert(self.lquc==0)
             log.info('No update! Master lagging!')
-            return vars
+            return False
         else:
             log.info('Master update! Queued count [%d]', self.lquc)
-            self.last_master_step, ret = data
-            return ret
+            self.last_master_step, self.data_ready = data
+            return True
 
 
 class WorkerReceiveMan:

@@ -170,6 +170,10 @@ def hist_batch_size(*args):
     return hist_(*args, 'num_samples', 'Batch size', binwidth=_a.binwidth_batch, is_time=False)
 
 @plt_ax.reg
+def hist_count(*args):
+    return hist_(*args, 'last_queued_update_count', 'Number of master updates', binwidth=1, is_time=False)
+
+@plt_ax.reg
 def hist_staleness(*args):
     def c_(root):
         if root.args['dist_sgy']=='async':

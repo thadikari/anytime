@@ -11,13 +11,23 @@ import strategy as sgy
 log = None
 
 
-# py_func doesn't work on GPUs without casting
-def safe_assign_vars(vars, func, arg=None):
-    vars_cast = [tf.cast(tt, tf.float64) for tt in vars]
-    inputs = vars_cast if arg is None else (arg, *vars_cast)
-    nvars = tf.py_func(func=func, inp=inputs, Tout=tuple(tt.dtype for tt in vars_cast))
-    nvars = [tf.cast(tt, tf.float32) for tt in nvars]
-    return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
+def safe_assign_vars(vars, func, arg=None, pred=None, pass_args=True):
+    # py_func doesn't work on GPUs without casting
+    def true_fn():
+        vars_cast = [tf.cast(tt, tf.float64) for tt in vars]
+        if pass_args: inputs = vars_cast if arg is None else (arg, *vars_cast)
+        else: inputs = []
+        nvars = tf.py_func(func=func, inp=inputs, Tout=tuple(tt.dtype for tt in vars_cast))
+        nvars = [tf.cast(tt, tf.float32) for tt in nvars]
+        return tf.group(*[tf.assign(var, nvar) for var, nvar in zip(vars, nvars)])
+
+    def false_fn(): return tf.no_op()
+
+    if pred is None:
+        return true_fn()
+    else:
+        pred_op = tf.py_func(func=pred, inp=[], Tout=tf.bool)
+        return tf.cond(pred_op, true_fn=true_fn, false_fn=false_fn)
 
 
 class BroadcastVariablesHook(tf.train.SessionRunHook):
@@ -162,7 +172,7 @@ class Master:#(tf.train.Optimizer):
         if sgy.size()>1:
             grads, vars = zip(*grads_and_vars)
             with tf.control_dependencies([apply_op]):
-                return safe_assign_vars(vars, self.strategy.send_update, global_step)
+                return safe_assign_vars(vars, self.strategy.send_update, arg=global_step)
         else:
             return apply_op
 
@@ -262,7 +272,7 @@ class Worker:
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
         with ctrl_pyfunc(self.send_grads_func, inp=(global_step, num_samples, *grads), Tout=[]):
-            assign_op = safe_assign_vars(vars, self.strategy.receive_update, global_step)
+            assign_op = safe_assign_vars(vars, self.strategy.receive_update, pred=self.strategy.is_update_ready, pass_args=False)
             with ctrl_dep([assign_op]):
                 with ctrl_dep([tf.assign_add(global_step, 1)]):
                     return py_exc(lambda:self.prof.tag('exit'))
