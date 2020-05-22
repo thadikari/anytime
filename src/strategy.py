@@ -169,9 +169,13 @@ class AsyncMasterBatch:
 
 class AsyncMasterTime:
     def __init__(self, threshold): self.threshold = threshold
-    def reset(self): self.time = time.time()
-    def on_result(self): pass
-    def should_wait(self): return time.time()-self.time <= self.threshold
+    def reset(self):
+        self.count = 0
+        self.time = time.time()
+    def on_result(self): self.count += 1
+    def should_wait(self):
+        if self.count==0: return True
+        else: return time.time()-self.time <= self.threshold
 
 
 class AsynchronousMaster(MasterBase):
