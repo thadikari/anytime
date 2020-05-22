@@ -163,14 +163,14 @@ class ReqManMax1:
 class AsyncMasterBatch:
     def __init__(self, threshold): self.threshold = threshold
     def reset(self): self.count = 0
-    def should_wait(self):
-        self.count += 1
-        return self.count <= self.threshold
+    def on_result(self): self.count += 1
+    def should_wait(self): return self.count <= self.threshold
 
 
 class AsyncMasterTime:
     def __init__(self, threshold): self.threshold = threshold
     def reset(self): self.time = time.time()
+    def on_result(self): pass
     def should_wait(self): return time.time()-self.time <= self.threshold
 
 
@@ -184,18 +184,23 @@ class AsynchronousMaster(MasterBase):
     def collect_grads(self, step, grads):
         total = 0
         self.checker.reset()
+        self.work.reset(step)
         while self.checker.should_wait():
-            state = MPI.Status()
-            ngrads, num_samples, stats = comm.recv(source=MPI.ANY_SOURCE, status=state)
-            # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
-            total += num_samples
-            rank = state.Get_source()
-            log.info('Incoming grads from [%d], num_samples [%d]', rank, num_samples)
-            self.work.reset(step)
-            self.work.on_result(rank, stats)
-            for ngrd,grd in zip(ngrads,grads): np.add(grd, ngrd, out=grd)
-        # log.info('MASTER EXIT [%d]', total)
-        for grd in grads: np.divide(grd, total, out=grd)
+            if comm.Iprobe():
+                state = MPI.Status()
+                ngrads, num_samples, stats = comm.recv(source=MPI.ANY_SOURCE, status=state)
+                # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
+                total += num_samples
+                rank = state.Get_source()
+                log.info('Incoming grads from [%d], num_samples [%d]', rank, num_samples)
+                self.checker.on_result()
+                self.work.on_result(rank, stats)
+                for ngrd,grd in zip(ngrads,grads): np.add(grd, ngrd, out=grd)
+            else:
+                time.sleep(0.001)  # 1 millisecond
+
+        if total>0:
+            for grd in grads: np.divide(grd, total, out=grd)
 
     def send_update(self, step, *vars):
         reqs = [comm.isend((step, vars), dest=i+1) for i in range(num_workers())]
