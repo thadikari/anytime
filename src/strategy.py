@@ -84,11 +84,10 @@ class WorkerBase:
 
 class SynchronousMaster(MasterBase):
     def collect_grads(self, step, grads):
+        self.work.reset(step)
         log.debug('Listening to [%d] workers', num_workers())
         total, stats_ll = mpi_reduce_grads(grads, 0., None)
         for acc in grads: np.divide(acc, total, out=acc)
-
-        self.work.reset(step)
         for i in range(num_workers()):
             # mpi gather always ensures the rank order?? Yes as per [4]
             rank = i+1   # skip master

@@ -124,7 +124,7 @@ def main():
     if sgy.is_master():
         hooks.append(nds.CSVLoggingHook(every_n_iter=_a.log_freq,
                      train_tensors={'step':global_step, 'loss':avg_loss, 'learning_rate':learning_rate},
-                     test_tensors={'accuracy':accuracy}, get_test_fd=get_test_fd,
+                     test_tensors={'test_loss':avg_loss, 'accuracy':accuracy}, get_test_fd=get_test_fd,
                      work_dir=logs_dir)) # 'accuracy':accuracy
 
     with tf.train.MonitoredTrainingSession(hooks=hooks) as mon_sess:

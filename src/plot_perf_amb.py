@@ -3,7 +3,6 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import json, csv, os, argparse
 import scipy.stats as stats
-from pathlib import Path
 import numpy as np
 import pandas
 import re
@@ -23,8 +22,7 @@ def proc_csv(file_path):
         ds = pandas.read_csv(file_path, header=0).to_dict('Series')
         return {key:ds[key].to_numpy() for key in ds}
     except Exception as e:
-        print(f'Error reading: {file_path}')
-        print(e)
+        print(f'Error reading: {file_path}', e)
         return {}
 
 class DataRoot:
@@ -34,6 +32,7 @@ class DataRoot:
         self.master_data = proc_csv(path_('master_stats.csv'))
         self.worker_data = proc_csv(path_('worker_stats.csv'))
         self.args = json.load(open(path_('args.json')))
+        print('>>', self.get_label())
 
     def get_label(self):
         dir_name = self.dir
@@ -88,32 +87,54 @@ def bandwidth_(data, ax_):
     ax_.grid(True, which='both')
     ax_.set_xlim([min(numw)-1, max(numw)+1])
 
-def hist_(data, ax_, key, x_label, binwidth=None, is_time=True):
-    if not callable(key):
-        data_list = list(root for root in data if key in root.worker_data)
-    else: data_list = data
-    if is_time:
-        xmax = max(np.amax(root.worker_data[key]) for root in data_list)
-        div,_, x_label = utils.get_best_time_scale(xmax, x_label)
-        binwidth /= div
-    else: div = 1
+def cum_(data, ax_):
+    ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+    y_key, x_label, y_label = 'num_samples', 'Step', 'Cumulative sum of examples'
+    for root in data:
+        dd = root.worker_data
+        # support for old csv files only
+        x_key = 'master_step' if 'master_step' in dd else 'step'
+        if y_key not in dd: continue
+        mul_ = 1  # aa['batch_size']
+        y_val = dd[y_key]
+        num_ele = int(len(y_val)*1) #_a.fraction)
+        y_val = y_val[:num_ele]
+        ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_, color=root.get_color(),
+                               linewidth=1.5, label=root.get_label())
+    utils.fmt_ax(ax_, x_label, y_label, leg=1)
+    ax_.grid(True, which='both')
+    set_x_sci(ax_)
 
+@plt_ax.reg
+def cumsum_vs_step(*args):
+    return cum_(*args)
+
+
+def hist_(data, ax_, key, x_label, binwidth=None, is_time=True, mean_line=False):
     freq_ll, bins_ll = [], []
-    for root in data_list:
-        # if not key in root.worker_data: continue
-        if callable(key):
-            arr = key(root)
-            if arr is None: continue
-        else:
-            arr = root.worker_data[key]
-            arr = arr[arr>=0]/div
-        bins = np.arange(min(arr), max(arr) + binwidth, binwidth)
+
+    for root in data:
+        if callable(key): arr = key(root)
+        else: arr = root.worker_data.get(key, None)
+        if arr is None: continue
+
+        arr = arr[arr>=0]
+        bins = np.arange(min(arr), max(arr) + binwidth, binwidth) - binwidth/2.
         if (len(bins))<10:
             mid_val = bins[abs(int(len(bins)/2.))]
             bins = mid_val + (np.arange(10)-4)*binwidth
-        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.5, color=root.get_color(), label=root.get_label())
+        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, color=root.get_color(), label=root.get_label())
         freq_ll.append(freq)
         bins_ll.append(bins)
+
+        if mean_line:
+            mean_ = arr.mean()
+            # min_ylim, max_ylim = ax_.get_ylim()
+            clr_no_alpha = patches[0]._facecolor[:-1]
+            ax_.axvline(mean_, color=clr_no_alpha, linestyle='--', linewidth=2)
+            #ax_.text(mean_*1.1, max_ylim*0.9, 'Mean: {:.2f}'.format(mean_))
+
+    if not len(freq_ll)>0: return
 
     def get_xlims_(freq, bins):
         avg_freq = np.max(freq)  # np.mean(freq[freq>0])
@@ -127,27 +148,15 @@ def hist_(data, ax_, key, x_label, binwidth=None, is_time=True):
     else:
         xmax = max(bins.max() for bins in bins_ll)
 
-    # if is_time: _, x_label = utils.set_best_time_scale(ax_, xmax, x_label)
+    if is_time: x_label = utils.set_best_time_scale(ax_, xmax, x_label)
     if _a.ylog or _a.hist_ylog: ax_.set_yscale('log')
     else: ax_.set_yticks([])
     utils.fmt_ax(ax_, x_label, 'Frequency', leg=1)
 
-def cum_(data, ax_):
-    ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
-    x_key, y_key, x_label, y_label = 'master_step', 'num_samples', 'Step', 'Cumulative sum of examples'
-    for root in data:
-        dd = root.worker_data
-        if y_key not in dd: continue
-        mul_ = 1  # aa['batch_size']
-        y_val = dd[y_key]
-        num_ele = int(len(y_val)*1) #_a.fraction)
-        y_val = y_val[:num_ele]
-        ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_, color=root.get_color(),
-                               linewidth=1.5, label=root.get_label())
-    utils.fmt_ax(ax_, x_label, y_label, leg=1)
-    ax_.grid(True, which='both')
-    set_x_sci(ax_)
 
+@plt_ax.reg
+def hist_arrival(*args):
+    return hist_(*args, 'compute_time_master', 'Master waiting time for workers', binwidth=0.01, mean_line=True)
 
 @plt_ax.reg
 def hist_exit(*args):
@@ -155,19 +164,19 @@ def hist_exit(*args):
 
 @plt_ax.reg
 def hist_send(*args):
-    return hist_(*args, 'last_send', 'Worker gradients send time', binwidth=0.01)
+    return hist_(*args, 'last_send', 'Send worker gradients', binwidth=0.01)
 
 @plt_ax.reg
 def hist_recv(*args):
-    return hist_(*args, 'last_recv', 'Master update receive time', binwidth=0.01)
+    return hist_(*args, 'last_recv', 'Receive master update', binwidth=0.01)
 
 @plt_ax.reg
 def hist_compute_time(*args):
-    return hist_(*args, 'compute_time', 'Computation time', binwidth=_a.binwidth_time)
+    return hist_(*args, 'compute_time', 'Computation time', binwidth=_a.binwidth_time, mean_line=True)
 
 @plt_ax.reg
 def hist_batch_size(*args):
-    return hist_(*args, 'num_samples', 'Batch size', binwidth=_a.binwidth_batch, is_time=False)
+    return hist_(*args, 'num_samples', 'Batch size', binwidth=_a.binwidth_batch, is_time=False, mean_line=True)
 
 @plt_ax.reg
 def hist_count(*args):
@@ -176,15 +185,12 @@ def hist_count(*args):
 @plt_ax.reg
 def hist_staleness(*args):
     def c_(root):
-        if root.args['dist_sgy']=='async':
+        if 'dist_sgy' in root.args and root.args['dist_sgy']=='async':
             data = root.worker_data
             return data['master_step'] - data['worker_master_step']
         else: return None
-    return hist_(*args, c_, 'Master step - worker\'s master step', binwidth=1, is_time=False)
-
-@plt_ax.reg
-def cumsum_vs_step(*args):
-    return cum_(*args)
+    # 'Master step - worker\'s master step'
+    return hist_(*args, c_, 'Gradient staleness', binwidth=1, is_time=False)
 
 
 #########################
@@ -194,10 +200,9 @@ def cumsum_vs_step(*args):
 def plot_(data, ax_, x_key, y_key, x_label, y_label, filter=True, ysci=False):
     if x_key=='time':
         xmax = max(np.max(root.master_data[x_key]) for root in data)
-        div,_, x_label = utils.get_best_time_scale(xmax, x_label)
+        x_label = utils.set_best_time_scale(ax_, xmax, x_label)
     else:
         set_x_sci(ax_)
-        div = 1
 
     if ysci: ax_.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     for root in data:
@@ -206,7 +211,7 @@ def plot_(data, ax_, x_key, y_key, x_label, y_label, filter=True, ysci=False):
         y_val = dd[y_key][:num_ele]
         if filter and _a.filter_sigma:
             y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
-        xval = dd[x_key][:num_ele]/div
+        xval = dd[x_key][:num_ele]
         if x_key=='time': xval -= min(xval) 
         ax_.plot(xval, y_val, color=root.get_color(),
                                 linewidth=1.5, label=root.get_label())
@@ -246,8 +251,7 @@ def distribution(data, ax_):
     y_ = lambda x_: sum(w*stats.norm.pdf(x_, mu, sigma) for mu,sigma,w in dd if sigma!=0)
     y = y_(x) + y_(-x)
     # if absolute value taken for negative values this is the resulting pdf
-    div,_, x_label = utils.get_best_time_scale(xmax, 'Induced delay')
-    x /= div
+    x_label = utils.set_best_time_scale(ax_, xmax, 'Induced computation delay')
     ax_.fill_between(x, 0, y, color='tan')   # label='Expected value ~=%g'%(x@y/sum(y)))
 
     ymax = max(y)
@@ -290,25 +294,41 @@ def master_bandwidth(data, sv_):
     sv_()
 
 
-all_plots_ll = (loss_vs_step, loss_vs_time, hist_compute_time,
-                accuracy_vs_step, accuracy_vs_time, hist_batch_size,
-                cumsum_vs_step, step_vs_time, learning_rate_vs_step)
 
-@plt_fig.reg
-def all_plots(data, sv_):
-    if _a.subset is None: hdls = all_plots_ll
-    else: hdls = [plt_ax.get(val) for val in _a.subset]
-    axes, fig = utils.get_subplot_axes(_a, len(hdls))
-    for i, ax in enumerate(axes): hdls[i](data, ax)
-    sv_()
+panel_main = (loss_vs_step, loss_vs_time, hist_compute_time,
+              accuracy_vs_step, accuracy_vs_time, hist_batch_size,
+              cumsum_vs_step, step_vs_time, learning_rate_vs_step)
+panel_hist = (hist_send, hist_recv, hist_exit, hist_staleness, hist_count,
+              hist_arrival, hist_compute_time, hist_batch_size, distribution)
+panel_all = list(set((*panel_main, *panel_hist)))
 
-@plt_fig.reg
-def all_plots_iter(data, sv_):
-    all_plots(data, sv_)
-    for hdl_ in all_plots_ll:
-        plt.figure()
-        hdl_(data, plt.gca())
-        sv_(hdl_.__name__)
+def panel_maker(name, hdls):
+    def get_hdls():
+        if _a.subset is not None:
+            return [plt_ax.get(val) for val in _a.subset], 'panel_subset'
+        else: return hdls, name
+
+    def panel(data, sv_):
+        hdls_, name_ = get_hdls()
+        axes, fig = utils.get_subplot_axes(_a, len(hdls_))
+        for i, ax in enumerate(axes): hdls_[i](data, ax)
+        sv_(name_)
+        return hdls_
+
+    def panel_iter(data, sv_):
+        hdls_ = panel(data, sv_)
+        for hdl_ in hdls_:
+            plt.figure()
+            hdl_(data, plt.gca())
+            sv_(hdl_.__name__)
+
+    plt_fig.put(name, panel)
+    plt_fig.put(f'{name}_iter', panel_iter)
+
+panel_maker('panel_main', panel_main)
+panel_maker('panel_hist', panel_hist)
+panel_maker('panel_all', panel_all)
+
 
 
 def main():
@@ -317,6 +337,7 @@ def main():
     data = [DataRoot(dir) for dir in dirs]
     get_path = lambda name_: os.path.join(_a.data_dir, name_)
     def save_hdl(name_=_a.type):
+        if _a.ylog: name_ = f'{name_}_ylog'
         plt.gcf().canvas.set_window_title(f'{_a.data_dir}: {name_}')
         utils.save_show_fig(_a, plt, get_path(name_))
     plt_fig.get(_a.type)(data, save_hdl)
@@ -325,7 +346,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', default=utilities.file.resolve_data_dir_os('distributed'))
 
-    parser.add_argument('--type', default='all_plots', choices=plt_fig.keys())
+    parser.add_argument('--type', default='panel_main', choices=plt_fig.keys())
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
 
     ## histogram-related arguments

@@ -39,6 +39,7 @@ tensorflow: 1.14.0
 * Generated with following arguments for `run_perf_amb.py`:
     * `cifar10 fmb rms 242 --test_size 100 --induce --decay_rate 0.93`
     * `cifar10 amb rms 356 --amb_time_limit 6.2 --amb_num_partitions 16 --test_size 100  --induce --decay_rate 0.93`
+* `python plot_perf_amb.py --short_label --data_dir ../data/800_cifar10/set2`
 
 <img src="data/800_cifar10/set2/all_plots.png?raw=true"/>
 
