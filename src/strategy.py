@@ -84,7 +84,7 @@ class WorkerBase:
 
 class SynchronousMaster(MasterBase):
     def collect_grads(self, step, grads):
-        self.work.reset(step)
+        self.work.start(step)
         log.debug('Listening to [%d] workers', num_workers())
         total, stats_ll = mpi_reduce_grads(grads, 0., None)
         for acc in grads: np.divide(acc, total, out=acc)
@@ -92,6 +92,7 @@ class SynchronousMaster(MasterBase):
             # mpi gather always ensures the rank order?? Yes as per [4]
             rank = i+1   # skip master
             self.work.on_result(rank, stats_ll[rank])
+        self.work.end(total)
 
     def send_update(self, _, *vars): return default_bcast_func(*vars)
 
@@ -163,7 +164,7 @@ class AsyncMasterBatch:
     def __init__(self, threshold): self.threshold = threshold
     def reset(self): self.count = 0
     def on_result(self): self.count += 1
-    def should_wait(self): return self.count <= self.threshold
+    def should_wait(self): return self.count < self.threshold
 
 
 class AsyncMasterTime:
@@ -173,6 +174,7 @@ class AsyncMasterTime:
         self.time = time.time()
     def on_result(self): self.count += 1
     def should_wait(self):
+        # wait for at least one message
         if self.count==0: return True
         else: return time.time()-self.time <= self.threshold
 
@@ -187,7 +189,7 @@ class AsynchronousMaster(MasterBase):
     def collect_grads(self, step, grads):
         total = 0
         self.checker.reset()
-        self.work.reset(step)
+        self.work.start(step)
         while self.checker.should_wait():
             if comm.Iprobe():
                 state = MPI.Status()
@@ -201,9 +203,10 @@ class AsynchronousMaster(MasterBase):
                 for ngrd,grd in zip(ngrads,grads): np.add(grd, ngrd, out=grd)
             else:
                 time.sleep(0.001)  # 1 millisecond
+        self.work.end(total)
 
-        if total>0:
-            for grd in grads: np.divide(grd, total, out=grd)
+        assert(total>0)
+        for grd in grads: np.divide(grd, total, out=grd)
 
     def send_update(self, step, *vars):
         reqs = [comm.isend((step, vars), dest=i+1) for i in range(num_workers())]
@@ -270,19 +273,28 @@ class WorkerProfiler:
     def __init__(self, dump_freq, columns, work_dir=None):
         self.ref_time = time.time()
         self.dump_freq = dump_freq
-        col_names = ('time', 'master_step', 'rank', *columns, 'compute_time_master')
-        self.csv = ut.file.CSVFile('worker_stats.csv', work_dir, col_names, mode='w')
+        col_names = ('time', 'master_step', 'rank', *columns, 'master_wait_time')
+        self.wcsv = ut.file.CSVFile('worker_stats.csv', work_dir, col_names, mode='w')
+        col_n = ('step', 'worker_count', 'wait_time', 'total_samples')
+        self.mcsv = ut.file.CSVFile('collect_stats.csv', work_dir, col_n, mode='w')
 
-    def reset(self, master_step):
-        if master_step%self.dump_freq==0: self.csv.flush()
-        self.round_started = time.time()
+    def end(self, total):
+        elapsed = time.time() - self.round_started
+        ndata = (self.master_step, self.worker_count, elapsed, total)
+        self.mcsv.writerow(ndata)
+        if self.master_step%self.dump_freq==0:
+            self.wcsv.flush()
+            self.mcsv.flush()
+
+    def start(self, master_step):
         self.master_step = master_step
+        self.round_started = time.time()
+        self.worker_count = 0
 
     def on_result(self, rank, stats):
         curr = time.time()
         elapsed_total = curr - self.ref_time
-        compute_time_master = curr - self.round_started
-        ndata = (elapsed_total, self.master_step, rank, *stats, compute_time_master)
-        self.csv.writerow(ndata)
-
-    def __del__(self): self.csv.flush()
+        master_wait_time = curr - self.round_started
+        ndata = (elapsed_total, self.master_step, rank, *stats, master_wait_time)
+        self.wcsv.writerow(ndata)
+        self.worker_count += 1

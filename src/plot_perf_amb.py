@@ -31,6 +31,7 @@ class DataRoot:
         path_ = lambda s_: os.path.join(_a.data_dir, dir, s_)
         self.master_data = proc_csv(path_('master_stats.csv'))
         self.worker_data = proc_csv(path_('worker_stats.csv'))
+        self.collect_data = proc_csv(path_('collect_stats.csv'))
         self.args = json.load(open(path_('args.json')))
         print('>>', self.get_label())
 
@@ -110,12 +111,11 @@ def cumsum_vs_step(*args):
     return cum_(*args)
 
 
-def hist_(data, ax_, key, x_label, binwidth=None, is_time=True, mean_line=False):
+def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False):
     freq_ll, bins_ll = [], []
 
     for root in data:
-        if callable(key): arr = key(root)
-        else: arr = root.worker_data.get(key, None)
+        arr = func(root)
         if arr is None: continue
 
         arr = arr[arr>=0]
@@ -149,38 +149,50 @@ def hist_(data, ax_, key, x_label, binwidth=None, is_time=True, mean_line=False)
         xmax = max(bins.max() for bins in bins_ll)
 
     if is_time: x_label = utils.set_best_time_scale(ax_, xmax, x_label)
+    else: set_x_sci(ax_)
     if _a.ylog or _a.hist_ylog: ax_.set_yscale('log')
     else: ax_.set_yticks([])
     utils.fmt_ax(ax_, x_label, 'Frequency', leg=1)
 
 
+wd_ = lambda key: (lambda root: root.worker_data.get(key, None))
+cd_ = lambda key: (lambda root: root.collect_data.get(key, None))
+
 @plt_ax.reg
-def hist_arrival(*args):
-    return hist_(*args, 'compute_time_master', 'Master waiting time for workers', binwidth=0.01, mean_line=True)
+def hist_total_samples(*args):
+    return hist_(*args, cd_('total_samples'), 'Master batch size', binwidth=1, mean_line=True, is_time=False)
+
+@plt_ax.reg
+def hist_worker_count(*args):
+    return hist_(*args, cd_('worker_count'), 'Number of gradients per master step', binwidth=1, mean_line=True, is_time=False)
+
+@plt_ax.reg
+def hist_wait_time(*args):
+    return hist_(*args, cd_('wait_time'), 'Master waiting time for workers', binwidth=0.01, mean_line=True)
 
 @plt_ax.reg
 def hist_exit(*args):
-    return hist_(*args, 'last_exit', 'Time between worker iterations', binwidth=0.01)
+    return hist_(*args, wd_('last_exit'), 'Time between worker iterations', binwidth=0.01)
 
 @plt_ax.reg
 def hist_send(*args):
-    return hist_(*args, 'last_send', 'Send worker gradients', binwidth=0.01)
+    return hist_(*args, wd_('last_send'), 'Send worker gradients time', binwidth=0.01)
 
 @plt_ax.reg
 def hist_recv(*args):
-    return hist_(*args, 'last_recv', 'Receive master update', binwidth=0.01)
+    return hist_(*args, wd_('last_recv'), 'Receive master update time', binwidth=0.01)
 
 @plt_ax.reg
 def hist_compute_time(*args):
-    return hist_(*args, 'compute_time', 'Computation time', binwidth=_a.binwidth_time, mean_line=True)
+    return hist_(*args, wd_('compute_time'), 'Computation time', binwidth=_a.binwidth_time, mean_line=True)
 
 @plt_ax.reg
 def hist_batch_size(*args):
-    return hist_(*args, 'num_samples', 'Batch size', binwidth=_a.binwidth_batch, is_time=False, mean_line=True)
+    return hist_(*args, wd_('num_samples'), 'Worker batch size', binwidth=_a.binwidth_batch, is_time=False, mean_line=True)
 
 @plt_ax.reg
-def hist_count(*args):
-    return hist_(*args, 'last_queued_update_count', 'Number of master updates', binwidth=1, is_time=False)
+def hist_queued_count(*args):
+    return hist_(*args, wd_('last_queued_update_count'), 'Number of master updates', binwidth=1, is_time=False)
 
 @plt_ax.reg
 def hist_staleness(*args):
@@ -298,9 +310,10 @@ def master_bandwidth(data, sv_):
 panel_main = (loss_vs_step, loss_vs_time, hist_compute_time,
               accuracy_vs_step, accuracy_vs_time, hist_batch_size,
               cumsum_vs_step, step_vs_time, learning_rate_vs_step)
-panel_hist = (hist_send, hist_recv, hist_exit, hist_staleness, hist_count,
-              hist_arrival, hist_compute_time, hist_batch_size, distribution)
-panel_all = list(set((*panel_main, *panel_hist)))
+panel_hist = (hist_send, hist_recv, hist_exit, hist_staleness, hist_queued_count,
+              hist_wait_time, hist_compute_time, hist_batch_size, distribution,
+              hist_total_samples, hist_worker_count)
+panel_all = sorted(list(set((*panel_main, *panel_hist))), key=lambda it: it.__name__)
 
 def panel_maker(name, hdls):
     def get_hdls():
