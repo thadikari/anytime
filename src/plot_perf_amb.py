@@ -26,8 +26,9 @@ def proc_csv(file_path):
         return {}
 
 class DataRoot:
-    def __init__(self, dir):
+    def __init__(self, dir, label):
         self.dir = dir
+        self.label = label
         path_ = lambda s_: os.path.join(_a.data_dir, dir, s_)
         self.master_data = proc_csv(path_('master_stats.csv'))
         self.worker_data = proc_csv(path_('worker_stats.csv'))
@@ -36,18 +37,16 @@ class DataRoot:
         print('>>', self.get_label())
 
     def get_label(self):
-        dir_name = self.dir
-        if _a.short_label:
-            if '_fmb_' in dir_name: return 'FMB'
-            if '_amb_' in dir_name: return 'AMB'
-        elif _a.resub:
+        if _a.resub:
+            dir_name = self.dir
             for pattern,repl in _a.resub:
                 dir_name = re.sub(pattern,repl,dir_name)
             return dir_name
         else:
-            return dir_name
+            return self.label
 
     def get_color(self):
+        return None
         dir_name = self.dir
         if not _a.short_label: return
         if '_fmb_' in dir_name: return 'r'
@@ -343,11 +342,22 @@ panel_maker('panel_hist', panel_hist)
 panel_maker('panel_all', panel_all)
 
 
+def get_unique_labels(dirs):
+    if len(dirs)>1:
+        spls = [dir.split('__') for dir in dirs]
+        sets = [set(spl) for spl in spls]
+        common = set().union(*sets)
+        common.intersection_update(*sets)
+        return ['_'.join(it for it in spl if it not in common) for spl in spls]
+    else:
+        return ['plot']
+
 
 def main():
     dirs = utilities.file.filter_directories(_a, _a.data_dir)
     if not dirs: exit()
-    data = [DataRoot(dir) for dir in dirs]
+    labels = get_unique_labels(dirs)
+    data = [DataRoot(dir,lab) for dir,lab in zip(dirs, labels)]
     get_path = lambda name_: os.path.join(_a.data_dir, name_)
     def save_hdl(name_=_a.type):
         if _a.ylog: name_ = f'{name_}_ylog'
@@ -369,7 +379,6 @@ def parse_args():
     parser.add_argument('--remove_hist_outliers', action='store_true')
     parser.add_argument('--outlier_threshold', type=float, default=0.00005)
 
-    parser.add_argument('--short_label', action='store_true')
     parser.add_argument('--resub', action='append', nargs=2, metavar=('pattern','substitute'))
 
     parser.add_argument('--ylog', action='store_true')

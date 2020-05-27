@@ -111,11 +111,11 @@ class SynchronousWorker(WorkerBase):
 ###############################################################################
 
 class AsynchronousFac(FactoryBase):
-    def master_args(self, style, batch_min, time_limit):
+    def master_args(self, style, batch_min, time_limit, fair_probe):
         def make_master():
             if style=='batch': ch = AsyncMasterBatch(batch_min)
             elif style=='time': ch = AsyncMasterTime(time_limit)
-            return AsynchronousMaster(self).set_checker(ch)
+            return AsynchronousMaster(self).init(ch, fair_probe)
 
         self.make_master = make_master
 
@@ -172,7 +172,9 @@ class AsyncMasterTime:
     def reset(self):
         self.count = 0
         self.time = time.time()
-    def on_result(self): self.count += 1
+    def on_result(self):
+        self.count += 1
+        log.info('on_result [%g], count [%d]', time.time()-self.time, self.count)
     def should_wait(self):
         # wait for at least one message
         if self.count==0: return True
@@ -180,23 +182,53 @@ class AsyncMasterTime:
 
 
 class AsynchronousMaster(MasterBase):
-    def set_checker(self, checker):
+    def init(self, checker, fair_probe):
         self.reqman = ReqMan('MASTER')
         # self.buff = bytearray(1<<30)
         self.checker = checker
+        self.last_served = [-1]*(num_workers()-1)
+        self.fair_probe = fair_probe
         return self
+
+    def probe_fair(self):
+        winner = -1
+        # observed that without this some workers starve in isending: self.reqman.add(req)
+        # with this only 40/80 cores are used in each worker!
+        for r_ in range(num_workers()):
+            src = r_+1
+            if comm.Iprobe(source=src):
+                print('IPROBE TRUE', src, self.last_served)
+                if src not in self.last_served:
+                    print('not in last_served', src)
+                    winner = src
+
+        if winner<0:
+            winner = self.probe_any()
+            print('FAST WORKER!!', winner, self.last_served)
+
+        if not winner<0:
+            self.last_served.pop(0)
+            self.last_served.append(winner)
+
+        return winner
+
+    def probe_any(self):
+        state = MPI.Status()
+        if comm.Iprobe(status=state):
+            return state.Get_source()
+        else:
+            return -1
 
     def collect_grads(self, step, grads):
         total = 0
         self.checker.reset()
         self.work.start(step)
         while self.checker.should_wait():
-            if comm.Iprobe():
-                state = MPI.Status()
-                ngrads, num_samples, stats = comm.recv(source=MPI.ANY_SOURCE, status=state)
+            rank = self.probe_fair() if self.fair_probe else self.probe_any()
+            if not rank<0:
+                ngrads, num_samples, stats = comm.recv(source=rank)
                 # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
                 total += num_samples
-                rank = state.Get_source()
                 log.info('Incoming grads from [%d], num_samples [%d]', rank, num_samples)
                 self.checker.on_result()
                 self.work.on_result(rank, stats)
