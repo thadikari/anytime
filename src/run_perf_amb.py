@@ -38,7 +38,6 @@ def parse_args():
     parser.add_argument('--async_master', help='async master master waiting style', choices=['time', 'batch'], default='batch')
     parser.add_argument('--async_master_time_limit', type=float, default=0.1)
     parser.add_argument('--async_master_batch_min', type=int, default=4)
-    parser.add_argument('--fair_probe', action='store_true', help='async master prioritizes recv from previously unsent workers')
 
     parser.add_argument('--induce', help='induce stragglers', action='store_true')
     parser.add_argument('--dist', default=\
@@ -113,7 +112,7 @@ def main():
     if _a.induce: dist.set_straggler(induce_dist=_a.dist)
 
     dist_sgy = sgy_reg[_a.dist_sgy](work_dir=logs_dir)
-    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master, fair_probe=_a.fair_probe,
+    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master,
         batch_min=_a.async_master_batch_min, time_limit=_a.async_master_time_limit)
     dist.set_strategy(dist_sgy)
 

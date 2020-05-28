@@ -17,6 +17,7 @@ utils.init(20, legend_font_size=18, tick_size=16)
 set_x_sci = lambda ax_: ax_.ticklabel_format(style='sci', axis='x', scilimits=(0,3))
 
 def proc_csv(file_path):
+    if not os.path.isfile(file_path): return {}
     try:
         if os.stat(file_path).st_size==0: return {}
         ds = pandas.read_csv(file_path, header=0).to_dict('Series')
@@ -45,13 +46,7 @@ class DataRoot:
         else:
             return self.label
 
-    def get_color(self):
-        return None
-        dir_name = self.dir
-        if not _a.short_label: return
-        if '_fmb_' in dir_name: return 'r'
-        if '_amb_' in dir_name: return 'b'
-
+    def get_color(self): return None
 
 
 plt_ax = utilities.Registry()
@@ -342,21 +337,10 @@ panel_maker('panel_hist', panel_hist)
 panel_maker('panel_all', panel_all)
 
 
-def get_unique_labels(dirs):
-    if len(dirs)>1:
-        spls = [dir.split('__') for dir in dirs]
-        sets = [set(spl) for spl in spls]
-        common = set().union(*sets)
-        common.intersection_update(*sets)
-        return ['_'.join(it for it in spl if it not in common) for spl in spls]
-    else:
-        return ['plot']
-
-
 def main():
     dirs = utilities.file.filter_directories(_a, _a.data_dir)
     if not dirs: exit()
-    labels = get_unique_labels(dirs)
+    labels = utilities.file.gen_unique_labels(dirs)
     data = [DataRoot(dir,lab) for dir,lab in zip(dirs, labels)]
     get_path = lambda name_: os.path.join(_a.data_dir, name_)
     def save_hdl(name_=_a.type):
