@@ -269,11 +269,14 @@ class Worker:
             with ctrl_dep(grads):
                 return vars, self.apply_gradients(grads_and_vars, num_samples, global_step)
 
+    def make_assign_op(self, vars, is_end_computation):
+        pred_func = lambda: self.strategy.is_update_ready(is_end_computation)
+        return safe_assign_vars(vars, self.strategy.receive_update, pred=pred_func, pass_args=False)
+
     def apply_gradients(self, grads_and_vars, num_samples, global_step):
         grads, vars = zip(*grads_and_vars)
         with ctrl_pyfunc(self.send_grads_func, inp=(global_step, num_samples, *grads), Tout=[]):
-            assign_op = safe_assign_vars(vars, self.strategy.receive_update, pred=self.strategy.is_update_ready, pass_args=False)
-            with ctrl_dep([assign_op]):
+            with ctrl_dep([self.make_assign_op(vars, True)]):
                 with ctrl_dep([tf.assign_add(global_step, 1)]):
                     return py_exc(lambda:self.prof.tag('exit'))
 
@@ -321,7 +324,8 @@ class AnytimeMiniBatchWorker(Worker):
             # print(list(ss.get_shape().as_list() for ss in self.vars))
             ret_accs = list(acc+grad for acc,grad in zip(accs, grads))
             # log_op = tf.py_func(func=log_, inp=[loss, curr_partition], Tout=[])
-            with tf.control_dependencies(ret_accs):
+            assign_op = self.make_assign_op(self.vars, False)
+            with tf.control_dependencies([*ret_accs, assign_op]):
                 return [curr_partition+1] + ret_accs
 
         accs_0 = list(tf.zeros(shape) for shape in shapes)

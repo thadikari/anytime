@@ -14,7 +14,7 @@ import utilities.file
 
 plt.style.use('classic')
 utils.init(20, legend_font_size=18, tick_size=16)
-set_x_sci = lambda ax_: ax_.ticklabel_format(style='sci', axis='x', scilimits=(0,3))
+set_x_sci = lambda ax_: ax_.ticklabel_format(style='sci', axis='x', scilimits=(0,4))
 
 def proc_csv(file_path):
     if not os.path.isfile(file_path): return {}
@@ -35,7 +35,6 @@ class DataRoot:
         self.worker_data = proc_csv(path_('worker_stats.csv'))
         self.collect_data = proc_csv(path_('collect_stats.csv'))
         self.args = json.load(open(path_('args.json')))
-        print('>>', self.get_label())
 
     def get_label(self):
         if _a.resub:
@@ -186,7 +185,7 @@ def hist_batch_size(*args):
 
 @plt_ax.reg
 def hist_queued_count(*args):
-    return hist_(*args, wd_('last_queued_update_count'), 'Number of master updates', binwidth=1, is_time=False)
+    return hist_(*args, wd_('last_queued_update_count'), 'Number of queued master updates', binwidth=1, is_time=False)
 
 @plt_ax.reg
 def hist_staleness(*args):
@@ -338,9 +337,8 @@ panel_maker('panel_all', panel_all)
 
 
 def main():
-    dirs = utilities.file.filter_directories(_a, _a.data_dir)
+    dirs, labels = utilities.file.filter_directories(_a, _a.data_dir)
     if not dirs: exit()
-    labels = utilities.file.gen_unique_labels(dirs)
     data = [DataRoot(dir,lab) for dir,lab in zip(dirs, labels)]
     get_path = lambda name_: os.path.join(_a.data_dir, name_)
     def save_hdl(name_=_a.type):

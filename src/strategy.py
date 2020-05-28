@@ -102,7 +102,8 @@ class SynchronousWorker(WorkerBase):
         stats = (num_samples, *stats)
         self.print_stats(stats)
         return mpi_reduce_grads(grads, num_samples, stats)
-    def is_update_ready(self): return True
+    ## do not update in middle of the computation
+    def is_update_ready(self, is_end_compute): return is_end_compute
     def receive_update(self): return default_bcast_func(None)
 
 
@@ -249,15 +250,16 @@ class AsynchronousWorker(WorkerBase):
         self.data_ready = None
         return ret
 
-    def is_update_ready(self):
+    def is_update_ready(self, is_end_compute):
         assert(self.data_ready==None)
         data, self.lquc = self.recman.get_latest()
         if data is None:
             assert(self.lquc==0)
-            log.info('No update! Master lagging!')
+            if is_end_compute: log.info('No update! Master lagging!')
             return False
         else:
-            log.info('Master update! Queued count [%d]', self.lquc)
+            ss = '' if is_end_compute else ' in middle of AMB computation!'
+            log.info('Master update%s! Queued count [%d]', ss, self.lquc)
             self.last_master_step, self.data_ready = data
             return True
 
