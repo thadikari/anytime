@@ -161,27 +161,27 @@ def hist_worker_count(*args):
 
 @plt_ax.reg
 def hist_wait_time(*args):
-    return hist_(*args, cd_('wait_time'), 'Master waiting time for workers', binwidth=0.01, mean_line=True)
+    return hist_(*args, cd_('wait_time'), 'Master waiting time for workers', binwidth=_a.bw_time, mean_line=True)
 
 @plt_ax.reg
 def hist_exit(*args):
-    return hist_(*args, wd_('last_exit'), 'Time between worker iterations', binwidth=0.01)
+    return hist_(*args, wd_('last_exit'), 'Time between worker iterations', binwidth=_a.bw_time)
 
 @plt_ax.reg
 def hist_send(*args):
-    return hist_(*args, wd_('last_send'), 'Send worker gradients time', binwidth=0.01)
+    return hist_(*args, wd_('last_send'), 'Send worker gradients time', binwidth=_a.bw_time)
 
 @plt_ax.reg
 def hist_recv(*args):
-    return hist_(*args, wd_('last_recv'), 'Receive master update time', binwidth=0.01)
+    return hist_(*args, wd_('last_recv'), 'Receive master update time', binwidth=_a.bw_time)
 
 @plt_ax.reg
 def hist_compute_time(*args):
-    return hist_(*args, wd_('compute_time'), 'Computation time', binwidth=_a.binwidth_time, mean_line=True)
+    return hist_(*args, wd_('compute_time'), 'Computation time', binwidth=_a.bw_time, mean_line=True)
 
 @plt_ax.reg
 def hist_batch_size(*args):
-    return hist_(*args, wd_('num_samples'), 'Worker batch size', binwidth=_a.binwidth_batch, is_time=False, mean_line=True)
+    return hist_(*args, wd_('num_samples'), 'Worker batch size', binwidth=1, is_time=False, mean_line=True)
 
 @plt_ax.reg
 def hist_queued_count(*args):
@@ -248,19 +248,22 @@ def step_vs_time(*args):
 def learning_rate_vs_step(*args):
     return plot_(*args, 'step', 'learning_rate', 'Step', 'Learning rate', filter=False, ysci=True)
 
-@plt_ax.reg
-def distribution(data, ax_):
-    dd = data[0].args['dist']
-    xmax = max(mu+sigma*5 for mu,sigma,_ in dd)
+
+#########################
+# straggler distribution
+#########################
+
+def distribution(ax_, dist_spec, xlabel):
+    xmax = max(mu+sigma*5 for mu,sigma,_ in dist_spec)
     x = np.linspace(0, xmax, 500)
-    y_ = lambda x_: sum(w*stats.norm.pdf(x_, mu, sigma) for mu,sigma,w in dd if sigma!=0)
+    y_ = lambda x_: sum(w*stats.norm.pdf(x_, mu, sigma) for mu,sigma,w in dist_spec if sigma!=0)
     y = y_(x) + y_(-x)
     # if absolute value taken for negative values this is the resulting pdf
-    x_label = utils.set_best_time_scale(ax_, xmax, 'Induced computation delay')
+    x_label = utils.set_best_time_scale(ax_, xmax, xlabel)
     ax_.fill_between(x, 0, y, color='tan')   # label='Expected value ~=%g'%(x@y/sum(y)))
 
     ymax = max(y)
-    for mu,sigma,w in dd:
+    for mu,sigma,w in dist_spec:
         if sigma==0:
             ax_.arrow(mu,0,0,ymax*1.2, head_width=0.08, head_length=0.03, linewidth=3, color='k')
             ax_.annotate(f'{w:g}', xy=(mu,ymax*1.3), ha='left')
@@ -270,6 +273,19 @@ def distribution(data, ax_):
     ax_.set_ylim([0, ymax*1.5])
     ax_.set_yticks([])
     utils.fmt_ax(ax_, x_label, 'PDF', 0)
+
+@plt_ax.reg
+def comp_straggler_dist(data, ax_):
+    args = data[0].args
+    if 'dist' in args and args['induce']:
+        distribution(ax_, args['dist'], 'Induced computation delay')
+
+@plt_ax.reg
+def comm_straggler_dist(data, ax_):
+    args = data[0].args
+    if 'async_delay_std' in args and args['async_delay_std']>0:
+        spec = (0, args['async_delay_std'], 1),
+        distribution(ax_, spec, 'Induced delay in receiving worker gradients')
 
 
 #########################
@@ -304,8 +320,8 @@ panel_main = (loss_vs_step, loss_vs_time, hist_compute_time,
               accuracy_vs_step, accuracy_vs_time, hist_batch_size,
               cumsum_vs_step, step_vs_time, learning_rate_vs_step)
 panel_hist = (hist_send, hist_recv, hist_exit, hist_staleness, hist_queued_count,
-              hist_wait_time, hist_compute_time, hist_batch_size, distribution,
-              hist_total_samples, hist_worker_count)
+              hist_wait_time, hist_compute_time, hist_batch_size, comp_straggler_dist,
+              comm_straggler_dist, hist_total_samples, hist_worker_count)
 panel_all = sorted(list(set((*panel_main, *panel_hist))), key=lambda it: it.__name__)
 
 def panel_maker(name, hdls):
@@ -355,8 +371,7 @@ def parse_args():
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
 
     ## histogram-related arguments
-    parser.add_argument('--binwidth_time', type=float, default=0.01)
-    parser.add_argument('--binwidth_batch', type=float, default=1)
+    parser.add_argument('--bw_time', help='time histogram binwidth', type=float, default=0.01)
     parser.add_argument('--hist_ylog', action='store_true')
     parser.add_argument('--remove_hist_outliers', action='store_true')
     parser.add_argument('--outlier_threshold', type=float, default=0.00005)

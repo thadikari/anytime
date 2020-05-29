@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument('--async_master', help='async master master waiting style', choices=['time', 'batch'], default='batch')
     parser.add_argument('--async_master_time_limit', type=float, default=0.1)
     parser.add_argument('--async_master_batch_min', type=int, default=4)
+    parser.add_argument('--async_delay_std', help='std.dev of 0 mean gaussian, delay=abs(sample)', type=float, default=-1)
 
     parser.add_argument('--induce', help='induce stragglers', action='store_true')
     parser.add_argument('--dist', default=\
@@ -74,7 +75,7 @@ def main():
     if _a.dist_sgy=='async':
         if _a.async_master=='batch': ext_str = f'{_a.async_master_batch_min}'
         elif _a.async_master=='time': ext_str = f'{_a.async_master_time_limit:g}'
-        sgy_args = f'{sgy_args}_{_a.async_master}_{ext_str}'
+        sgy_args = f'{sgy_args}_{_a.async_master}_{ext_str}_{_a.async_delay_std:g}'
 
     sgy.init() # log_level=(not _a.no_stats))
     num_workers = sgy.num_workers()
@@ -112,7 +113,7 @@ def main():
     if _a.induce: dist.set_straggler(induce_dist=_a.dist)
 
     dist_sgy = sgy_reg[_a.dist_sgy](work_dir=logs_dir)
-    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master,
+    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master, delay_std=_a.async_delay_std,
         batch_min=_a.async_master_batch_min, time_limit=_a.async_master_time_limit)
     dist.set_strategy(dist_sgy)
 

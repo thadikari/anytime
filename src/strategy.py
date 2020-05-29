@@ -112,12 +112,9 @@ class SynchronousWorker(WorkerBase):
 ###############################################################################
 
 class AsynchronousFac(FactoryBase):
-    def master_args(self, style, batch_min, time_limit):
+    def master_args(self, **kwargs):
         def make_master():
-            if style=='batch': ch = AsyncMasterBatch(batch_min)
-            elif style=='time': ch = AsyncMasterTime(time_limit)
-            return AsynchronousMaster(self).set_checker(ch)
-
+            return AsynchronousMaster(self).init(**kwargs)
         self.make_master = make_master
 
     def make_worker(self): return AsynchronousWorker(self).init()
@@ -182,22 +179,57 @@ class AsyncMasterTime:
         else: return time.time()-self.time <= self.threshold
 
 
-class RecvReq:
-    def __init__(self, src):
-        self.buff = bytearray(1<<26)
-        self.src = src
-        self.reset()
+class RecvManBase:
+    def __init__(self):
+        self.newreq = lambda: comm.irecv(bytearray(1<<26), source=MPI.ANY_SOURCE)
+        self.reqs = [self.newreq() for _ in range(num_workers()*2)]
+        # it is possible that some CPU workers in EC2 starve
+        # while isend grads to master. in that case revert the changes
+        # to RecvReq in c2c4cb63be91e0485a0327768401570757f97639
 
-    def reset(self):
-        self.req = comm.irecv(self.buff, source=self.src)
-        # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
+    def get_if_ready(self):
+        state = MPI.Status()
+        flag, data = self.reqs[0].test(status=state)
+        if flag:
+            self.reqs.pop(0).wait()
+            self.reqs.append(self.newreq())
+            return data, state.Get_source()
+        else:
+            return None, -1
+
+
+class RecvManStraggler:
+    def __init__(self, delay_std):
+        self.inner = RecvManBase()
+        self.delay_std = delay_std
+        self.queue = []
+
+    def get_if_ready(self):
+        data, src = self.inner.get_if_ready()
+        if not data is None: self.add(data, src)
+        return self.try_get_next()
+
+    def add(self, *args):
+        delay = abs(np.random.normal()*self.delay_std)
+        expire = time.time() + delay
+        self.queue.append((expire, args))
+        # print('delay', delay, '   time,', time.time())
+        # print('before', list(zip(*self.queue))[0])
+        self.queue.sort()
+        # print('after ', list(zip(*self.queue))[0])
+
+    def try_get_next(self):
+        if len(self.queue)>0 and time.time()>self.queue[0][0]:
+            return self.queue.pop(0)[1]
+        else: return None, -1
+
 
 class AsynchronousMaster(MasterBase):
-    def set_checker(self, checker):
+    def init(self, style, batch_min, time_limit, delay_std):
         self.reqman = ReqMan('MASTER')
-        self.checker = checker
-        # i+1 b/c master is 0
-        self.reqs = [RecvReq(i+1) for i in range(num_workers())]
+        if style=='batch': self.checker = AsyncMasterBatch(batch_min)
+        elif style=='time': self.checker = AsyncMasterTime(time_limit)
+        self.reqs = RecvManStraggler(delay_std) if delay_std>0 else RecvManBase()
         return self
 
     def collect_grads(self, step, grads):
@@ -205,19 +237,16 @@ class AsynchronousMaster(MasterBase):
         self.checker.reset()
         self.work.start(step)
         while self.checker.should_wait():
-            for reqobj in self.reqs:
-                flag, data = reqobj.req.test()
-                if not flag: continue
-                else: reqobj.reset()
-
-                rank = reqobj.src
+            data, rank = self.reqs.get_if_ready()
+            if not data is None:
                 ngrads, num_samples, stats = data
                 total += num_samples
                 log.info('Incoming grads from [%d], num_samples [%d]', rank, num_samples)
                 self.checker.on_result()
                 self.work.on_result(rank, stats)
                 for ngrd,grd in zip(ngrads,grads): np.add(grd, ngrd, out=grd)
-            time.sleep(0.0001)  # 0.1 millisecond, break between rounds
+            else:
+                time.sleep(0.0001)  # 0.1 millisecond, break between rounds
 
         self.work.end(total)
 
