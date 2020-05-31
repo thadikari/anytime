@@ -179,21 +179,33 @@ class AsyncMasterTime:
         else: return time.time()-self.time <= self.threshold
 
 
+class RecvReq:
+    def __init__(self, src):
+        self.buff = bytearray(1<<26)
+        self.src = src
+        self.reset()
+
+    def reset(self):
+        self.req = comm.irecv(self.buff, source=self.src)
+        # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
+
+
 class RecvManBase:
     def __init__(self):
-        self.newreq = lambda: comm.irecv(bytearray(1<<26), source=MPI.ANY_SOURCE)
-        self.reqs = [self.newreq() for _ in range(num_workers()*2)]
-        # it is possible that some CPU workers in EC2 starve
-        # while isend grads to master. in that case revert the changes
-        # to RecvReq in c2c4cb63be91e0485a0327768401570757f97639
+        self.reqs = [RecvReq(i+1) for i in range(num_workers())]
+        # it is possible to make RecvReq that listens to MPI.ANY_SOURCE
+        # but for some reason runs slower than current approach
+        self.last_pos = 0
 
     def get_if_ready(self):
-        state = MPI.Status()
-        flag, data = self.reqs[0].test(status=state)
+        self.last_pos += 1
+        if self.last_pos==len(self.reqs): self.last_pos = 0
+        req = self.reqs[self.last_pos]
+        flag, data = req.req.test()
         if flag:
-            self.reqs.pop(0).wait()
-            self.reqs.append(self.newreq())
-            return data, state.Get_source()
+            req.req.wait()
+            req.reset()
+            return data, self.last_pos+1 # rank 1 + the array position
         else:
             return None, -1
 
@@ -246,7 +258,7 @@ class AsynchronousMaster(MasterBase):
                 self.work.on_result(rank, stats)
                 for ngrd,grd in zip(ngrads,grads): np.add(grd, ngrd, out=grd)
             else:
-                time.sleep(0.0001)  # 0.1 millisecond, break between rounds
+                time.sleep(0.00001)  # 0.1 millisecond, break between rounds
 
         self.work.end(total)
 

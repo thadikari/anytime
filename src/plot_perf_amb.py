@@ -332,20 +332,19 @@ def panel_maker(name, hdls):
 
     def panel(data, sv_):
         hdls_, name_ = get_hdls()
-        axes, fig = utils.get_subplot_axes(_a, len(hdls_))
+        axes, fig = utils.get_subplot_axes(_a.ax_size, len(hdls_))
         for i, ax in enumerate(axes): hdls_[i](data, ax)
         sv_(name_)
-        return hdls_
+        if _a.separate: panel_sep(hdls_, data, sv_)
 
-    def panel_iter(data, sv_):
-        hdls_ = panel(data, sv_)
+    def panel_sep(hdls_, data, sv_):
         for hdl_ in hdls_:
-            plt.figure()
+            fig = plt.figure()
+            fig.set_size_inches(_a.ax_size[0], _a.ax_size[1])
             hdl_(data, plt.gca())
             sv_(hdl_.__name__)
 
     plt_fig.put(name, panel)
-    plt_fig.put(f'{name}_iter', panel_iter)
 
 panel_maker('panel_main', panel_main)
 panel_maker('panel_hist', panel_hist)
@@ -369,6 +368,10 @@ def parse_args():
 
     parser.add_argument('--type', default='panel_main', choices=plt_fig.keys())
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
+    parser.add_argument('--separate', help='if [type] is a panel with multple plots, save or display all axes separately', action='store_true')
+    # parser.add_argument('--subplot', help='subplot config number of rows and cols', default=None, type=int, nargs=2)
+    parser.add_argument('--ax_size', help='width, height per axis', type=float, nargs=2, default=[8,5])
+    parser.add_argument('--ax_scale', help='scale ax_size by this', type=float, default=1)
 
     ## histogram-related arguments
     parser.add_argument('--bw_time', help='time histogram binwidth', type=float, default=0.01)
@@ -383,11 +386,11 @@ def parse_args():
     # parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 
     utilities.file.bind_dir_filter_args(parser)
-    utils.bind_subplot_args(parser, ax_size_default=[8,5])
     utils.bind_fig_save_args(parser)
     return parser.parse_args()
 
 if __name__ == '__main__':
     _a = parse_args()
     print('[Arguments]', vars(_a))
+    _a.ax_size = [it*_a.ax_scale for it in _a.ax_size]
     main()
