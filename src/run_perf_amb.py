@@ -113,8 +113,8 @@ def main():
     if _a.induce: dist.set_straggler(induce_dist=_a.dist)
 
     dist_sgy = sgy_reg[_a.dist_sgy](work_dir=logs_dir)
-    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master, delay_std=_a.async_delay_std,
-        batch_min=_a.async_master_batch_min, time_limit=_a.async_master_time_limit)
+    if _a.dist_sgy=='async': dist_sgy.master_args(style=_a.async_master,
+        batch_min=_a.async_master_batch_min, time_limit=_a.async_master_time_limit).set_straggler(delay_std=_a.async_delay_std)
     dist.set_strategy(dist_sgy)
 
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)

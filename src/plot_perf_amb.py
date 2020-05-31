@@ -370,8 +370,7 @@ def parse_args():
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
     parser.add_argument('--separate', help='if [type] is a panel with multple plots, save or display all axes separately', action='store_true')
     # parser.add_argument('--subplot', help='subplot config number of rows and cols', default=None, type=int, nargs=2)
-    parser.add_argument('--ax_size', help='width, height per axis', type=float, nargs=2, default=[8,5])
-    parser.add_argument('--ax_scale', help='scale ax_size by this', type=float, default=1)
+    parser.add_argument('--ax_size', help='width, height {scale} per axis', type=float, nargs='+', action=utils.AxSizeAction, default=[8,5])
 
     ## histogram-related arguments
     parser.add_argument('--bw_time', help='time histogram binwidth', type=float, default=0.01)
@@ -392,5 +391,4 @@ def parse_args():
 if __name__ == '__main__':
     _a = parse_args()
     print('[Arguments]', vars(_a))
-    _a.ax_size = [it*_a.ax_scale for it in _a.ax_size]
     main()

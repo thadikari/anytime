@@ -114,10 +114,22 @@ class SynchronousWorker(WorkerBase):
 class AsynchronousFac(FactoryBase):
     def master_args(self, **kwargs):
         def make_master():
-            return AsynchronousMaster(self).init(**kwargs)
+            receiver = self.make_receiver(MasterReceiver())
+            mkwargs = {**kwargs, 'receiver': receiver}
+            return AsynchronousMaster(self).init(**mkwargs)
         self.make_master = make_master
+        return self
 
-    def make_worker(self): return AsynchronousWorker(self).init()
+    def make_worker(self):
+        receiver = self.make_receiver(WorkerReceiver())
+        return AsynchronousWorker(self).init(receiver=receiver)
+
+    def make_receiver(self, inner):
+        return RecvStraggler(inner, self.delay) if self.delay>0 else inner
+
+    def set_straggler(self, delay_std):
+        self.delay = delay_std
+        return self
 
     def set_stats(self, stat_names):
         self.stat_names = ('worker_step', 'worker_master_step', 'last_queued_update_count', 'num_samples', *stat_names)
@@ -190,7 +202,7 @@ class RecvReq:
         # ngrads, stats = comm.irecv(self.buff, source=MPI.ANY_SOURCE).wait(status=state)
 
 
-class RecvManBase:
+class MasterReceiver:
     def __init__(self):
         self.reqs = [RecvReq(i+1) for i in range(num_workers())]
         # it is possible to make RecvReq that listens to MPI.ANY_SOURCE
@@ -207,24 +219,24 @@ class RecvManBase:
             req.reset()
             return data, self.last_pos+1 # rank 1 + the array position
         else:
-            return None, -1
+            return None
 
 
-class RecvManStraggler:
-    def __init__(self, delay_std):
-        self.inner = RecvManBase()
+class RecvStraggler:
+    def __init__(self, receiver, delay_std):
+        self.inner = receiver
         self.delay_std = delay_std
         self.queue = []
 
     def get_if_ready(self):
-        data, src = self.inner.get_if_ready()
-        if not data is None: self.add(data, src)
+        msg = self.inner.get_if_ready()
+        if not msg is None: self.add(msg)
         return self.try_get_next()
 
-    def add(self, *args):
+    def add(self, msg):
         delay = abs(np.random.normal()*self.delay_std)
         expire = time.time() + delay
-        self.queue.append((expire, args))
+        self.queue.append((expire, msg))
         # print('delay', delay, '   time,', time.time())
         # print('before', list(zip(*self.queue))[0])
         self.queue.sort()
@@ -233,15 +245,15 @@ class RecvManStraggler:
     def try_get_next(self):
         if len(self.queue)>0 and time.time()>self.queue[0][0]:
             return self.queue.pop(0)[1]
-        else: return None, -1
+        else: return None
 
 
 class AsynchronousMaster(MasterBase):
-    def init(self, style, batch_min, time_limit, delay_std):
+    def init(self, style, batch_min, time_limit, receiver):
         self.reqman = ReqMan('MASTER')
         if style=='batch': self.checker = AsyncMasterBatch(batch_min)
         elif style=='time': self.checker = AsyncMasterTime(time_limit)
-        self.reqs = RecvManStraggler(delay_std) if delay_std>0 else RecvManBase()
+        self.reqs = receiver
         return self
 
     def collect_grads(self, step, grads):
@@ -249,9 +261,9 @@ class AsynchronousMaster(MasterBase):
         self.checker.reset()
         self.work.start(step)
         while self.checker.should_wait():
-            data, rank = self.reqs.get_if_ready()
-            if not data is None:
-                ngrads, num_samples, stats = data
+            msg = self.reqs.get_if_ready()
+            if not msg is None:
+                (ngrads, num_samples, stats), rank = msg
                 total += num_samples
                 log.info('Incoming grads from [%d], num_samples [%d]', rank, num_samples)
                 self.checker.on_result()
@@ -272,9 +284,9 @@ class AsynchronousMaster(MasterBase):
 
 
 class AsynchronousWorker(WorkerBase):
-    def init(self):
+    def init(self, receiver):
         self.reqman = ReqManMax1('WORKER')
-        self.recman = WorkerReceiveMan()
+        self.receiver = receiver
         self.last_master_step = 0
         self.lquc = 0
         self.data_ready = None
@@ -293,24 +305,25 @@ class AsynchronousWorker(WorkerBase):
 
     def is_update_ready(self, is_end_compute):
         assert(self.data_ready==None)
-        data, self.lquc = self.recman.get_latest()
-        if data is None:
-            assert(self.lquc==0)
+        msg = self.receiver.get_if_ready()
+        if msg is None:
+            self.lquc = 0
             if is_end_compute: log.info('No update! Master lagging!')
             return False
         else:
+            data, self.lquc = msg
             ss = '' if is_end_compute else ' in middle of AMB computation!'
             log.info('Master update%s! Queued count [%d]', ss, self.lquc)
             self.last_master_step, self.data_ready = data
             return True
 
 
-class WorkerReceiveMan:
+class WorkerReceiver:
     def __init__(self):
         self.newreq = lambda: comm.irecv(bytearray(1<<26), source=ROOT_RANK)
         self.reqs = [self.newreq() for i in range(10)]
 
-    def get_latest(self):
+    def get_if_ready(self):
         ret_data, count = None, 0
         while 1:
             # assumption: self.reqs[i] is completed
@@ -322,7 +335,12 @@ class WorkerReceiveMan:
                 ret_data = data
                 count += 1
             else: break
-        return ret_data, count
+
+        if ret_data is None:
+            assert(count==0)
+            return None
+        else:
+            return ret_data, count
 
 
 ###############################################################################
