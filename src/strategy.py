@@ -239,7 +239,7 @@ class RecvStraggler:
         self.queue.append((expire, msg))
         # print('delay', delay, '   time,', time.time())
         # print('before', list(zip(*self.queue))[0])
-        self.queue.sort()
+        self.queue.sort(key=lambda it: it[0])
         # print('after ', list(zip(*self.queue))[0])
 
     def try_get_next(self):
@@ -254,12 +254,12 @@ class AsynchronousMaster(MasterBase):
         if style=='batch': self.checker = AsyncMasterBatch(batch_min)
         elif style=='time': self.checker = AsyncMasterTime(time_limit)
         self.reqs = receiver
+        self.checker.reset()
+        self.work.start(0)
         return self
 
     def collect_grads(self, step, grads):
         total = 0
-        self.checker.reset()
-        self.work.start(step)
         while self.checker.should_wait():
             msg = self.reqs.get_if_ready()
             if not msg is None:
@@ -276,6 +276,8 @@ class AsynchronousMaster(MasterBase):
 
         assert(total>0)
         for grd in grads: np.divide(grd, total, out=grd)
+        self.checker.reset()
+        self.work.start(step+1)
 
     def send_update(self, step, *vars):
         reqs = [comm.isend((step, vars), dest=i+1) for i in range(num_workers())]

@@ -164,6 +164,11 @@ def hist_wait_time(*args):
     return hist_(*args, cd_('wait_time'), 'Master waiting time for workers', binwidth=_a.bw_time, mean_line=True)
 
 @plt_ax.reg
+def hist_master_round_time(*args):
+    c_ = lambda root: np.diff(root.master_data['time'])
+    return hist_(*args, c_, 'Time per master iteration', binwidth=_a.bw_time, mean_line=True)
+
+@plt_ax.reg
 def hist_exit(*args):
     return hist_(*args, wd_('last_exit'), 'Time between worker iterations', binwidth=_a.bw_time)
 
@@ -321,7 +326,7 @@ panel_main = (loss_vs_step, loss_vs_time, hist_compute_time,
               cumsum_vs_step, step_vs_time, learning_rate_vs_step)
 panel_hist = (hist_send, hist_recv, hist_exit, hist_staleness, hist_queued_count,
               hist_wait_time, hist_compute_time, hist_batch_size, comp_straggler_dist,
-              comm_straggler_dist, hist_total_samples, hist_worker_count)
+              comm_straggler_dist, hist_total_samples, hist_worker_count, hist_master_round_time)
 panel_all = sorted(list(set((*panel_main, *panel_hist))), key=lambda it: it.__name__)
 
 def panel_maker(name, hdls):
@@ -339,7 +344,8 @@ def panel_maker(name, hdls):
 
     def panel_sep(hdls_, data, sv_):
         for hdl_ in hdls_:
-            fig = plt.figure()
+            fig = plt.gcf()
+            fig.clf()
             fig.set_size_inches(_a.ax_size[0], _a.ax_size[1])
             hdl_(data, plt.gca())
             sv_(hdl_.__name__)
