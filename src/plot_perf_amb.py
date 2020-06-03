@@ -200,7 +200,7 @@ def hist_staleness(*args):
             return data['master_step'] - data['worker_master_step']
         else: return None
     # 'Master step - worker\'s master step'
-    return hist_(*args, c_, 'Gradient staleness', binwidth=1, is_time=False)
+    return hist_(*args, c_, 'Gradient staleness', binwidth=1, is_time=False, mean_line=True)
 
 
 #########################

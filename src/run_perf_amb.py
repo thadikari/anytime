@@ -54,8 +54,7 @@ def parse_args():
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
 
-    parser.add_argument('--cpu_master', help='master runs on CPU', action='store_true')
-    parser.add_argument('--gpu_master', help='only master runs on GPU', action='store_true')
+    parser.add_argument('--cuda', help='set CUDA_VISIBLE_DEVICES differently if on same node', choices=['cpu_master', 'gpu_master', 'gpu_all'])
 
     ut.learningrate.bind_learning_rates(parser)
     args = parser.parse_args()
@@ -85,8 +84,11 @@ def main():
     logs_dir = os.path.join(_a.data_dir, run_id)
     ds_args = {'batch_size':_a.batch_size, 'test_size':_a.test_size}
 
-    if (sgy.is_master() and _a.cpu_master) or (not sgy.is_master() and _a.gpu_master):
+    if (sgy.is_master() and _a.cuda=='cpu_master') or (not sgy.is_master() and _a.cuda=='gpu_master'):
         os.environ['CUDA_VISIBLE_DEVICES'] = ''
+    elif _a.cuda=='gpu_all':
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(sgy.rank())
+    print('CUDA_VISIBLE_DEVICES [rank %d]: %s'%(sgy.rank(), str(os.environ.get('CUDA_VISIBLE_DEVICES', None))))
 
     if sgy.is_master():
         print('run_id: %s'%run_id)
