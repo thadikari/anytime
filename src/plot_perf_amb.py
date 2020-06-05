@@ -13,7 +13,6 @@ import utilities.file
 
 
 plt.style.use('classic')
-utils.init(20, legend_font_size=18, tick_size=16)
 set_x_sci = lambda ax_: ax_.ticklabel_format(style='sci', axis='x', scilimits=(0,4))
 
 def proc_csv(file_path):
@@ -106,6 +105,7 @@ def cumsum_vs_step(*args):
 
 def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False):
     freq_ll, bins_ll = [], []
+    offset = lambda min_: 0 if min_ > -0.5*binwidth else (-min_-0.5*binwidth)
 
     for root in data:
         arr = func(root)
@@ -116,7 +116,9 @@ def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False
         if (len(bins))<10:
             mid_val = bins[abs(int(len(bins)/2.))]
             bins = mid_val + (np.arange(10)-4)*binwidth
-        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, color=root.get_color(), label=root.get_label())
+            bins += offset(bins[0])
+
+        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, linewidth=0, color=root.get_color(), label=root.get_label())
         freq_ll.append(freq)
         bins_ll.append(bins)
 
@@ -132,7 +134,9 @@ def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False
     def get_xlims_(freq, bins):
         avg_freq = np.max(freq)  # np.mean(freq[freq>0])
         valid = (freq > avg_freq*_a.outlier_threshold).nonzero()[0]
-        return bins[valid[0]]-3*binwidth, bins[valid[-1]]+6*binwidth
+        mn, mx = bins[valid[0]]-3*binwidth, bins[valid[-1]]+6*binwidth
+        off = offset(mn)
+        return mn+off, mx+off
 
     if _a.remove_hist_outliers:
         mins, maxs = zip(*[get_xlims_(*its) for its in zip(freq_ll, bins_ll)])
@@ -161,7 +165,7 @@ def hist_worker_count(*args):
 
 @plt_ax.reg
 def hist_wait_time(*args):
-    return hist_(*args, cd_('wait_time'), 'Master waiting time for workers', binwidth=_a.bw_time, mean_line=True)
+    return hist_(*args, cd_('wait_time'), 'Master wait time for workers', binwidth=_a.bw_time, mean_line=True)
 
 @plt_ax.reg
 def hist_master_round_time(*args):
@@ -390,6 +394,10 @@ def parse_args():
     parser.add_argument('--filter_sigma', default=0, type=float)
     # parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 
+    parser.add_argument('--font_size', default=20, type=int)
+    parser.add_argument('--legend_font_size', default=18, type=int)
+    parser.add_argument('--tick_size', default=16, type=int)
+
     utilities.file.bind_dir_filter_args(parser)
     utils.bind_fig_save_args(parser)
     return parser.parse_args()
@@ -397,4 +405,5 @@ def parse_args():
 if __name__ == '__main__':
     _a = parse_args()
     print('[Arguments]', vars(_a))
+    utils.init(_a.font_size, legend_font_size=_a.legend_font_size, tick_size=_a.tick_size)
     main()
