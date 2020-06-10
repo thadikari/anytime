@@ -141,11 +141,12 @@ def plot(file_name):
 
     def fmt_ax(ax_, xl_, yl_):
         utils.fmt_ax(ax_, xl_, yl_, leg=1)
+        if args.xmin is not None: ax_.set_xlim(left=args.xmin)
         if args.ylim is not None: ax_.set_ylim(args.ylim)
         ax_.set_xscale('log', basex=2); ax_.set_yscale('log');
 
-    fmt_ax(ax1, 'Number of partitions $P$', 'Time per step')
-    fmt_ax(ax2, 'Partition size $N/P$', 'Time per sample')
+    fmt_ax(ax1, 'Number of microbatches $P$', 'Time per step')
+    fmt_ax(ax2, 'Microbatch size $N/P$', 'Time per sample')
     plt.tight_layout()
 
     if args.save:
@@ -185,6 +186,7 @@ def parse_args_plot(parser):
     parser.add_argument('--silent', action='store_true')
     parser.add_argument('--file_name', default=None, type=str)
     parser.add_argument('--ylim', default=None, type=float, nargs=2)
+    parser.add_argument('--xmin', default=None, type=float)
     parser.add_argument('--figsize', default=(14, 8), nargs=2, type=float)
     parser.add_argument('--ext', default=['pdf'], nargs='+', choices=['pdf', 'png'])
 

@@ -1,4 +1,3 @@
-python ../src/plot_perf_amb.py --data_dir 1100_batchnorm_impact_AMB --dir_regex imag* --type all_plots --subset loss_vs_step accuracy_vs_step --ax_size 11 11 --filter_sigma 5 --resub "imagenet32__fmb_mom_128__0.1_50_1_" "FMB-" --resub "imagenet32__amb_mom_128__15_" "AMB-" --resub "__0.1_50_1_" "" --resub "_False_1" "" --resub "_False_0" "M"
+python -u ../../src/plot_perf_amb.py --data_dir ./ --and imag amb --subset loss_vs_step accuracy_vs_step --ax_size 9 9 --filter_sigma 5 --nats --rev --save --silent
 
-
-python ../src/plot_perf_amb.py --data_dir 1100_batchnorm_impact_AMB --dir_regex cif* --type all_plots --subset loss_vs_step accuracy_vs_step --ax_size 11 11 --filter_sigma 5 --resub "cifar10__fmb_mom_256__0.001_50_1_" "FMB-" --resub "cifar10__amb_mom_256__10.2_" "AMB-" --resub "__0.001_50_1_" "" --resub "_False_1" "" --resub "_False_0" "M"
+python -u ../../src/plot_perf_amb.py --data_dir ./ --and cif amb --subset loss_vs_step accuracy_vs_step --ax_size 9 9 --filter_sigma 5 --nats --rev --save --silent

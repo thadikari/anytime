@@ -362,9 +362,14 @@ panel_maker('panel_all', panel_all)
 
 
 def main():
-    dirs, labels = utilities.file.filter_directories(_a, _a.data_dir)
+    dirs = utilities.file.filter_directories(_a, _a.data_dir)
     if not dirs: exit()
-    data = [DataRoot(dir,lab) for dir,lab in zip(dirs, labels)]
+
+    labels = utilities.file.gen_unique_labels(dirs)
+    zipped = list(zip(dirs, labels))
+    utilities.file.reorder(_a, zipped)
+    data = [DataRoot(*args) for args in zipped]
+
     get_path = lambda name_: os.path.join(_a.data_dir, name_)
     def save_hdl(name_=_a.type):
         if _a.ylog: name_ = f'{name_}_ylog'
@@ -399,6 +404,7 @@ def parse_args():
     parser.add_argument('--tick_size', default=16, type=int)
 
     utilities.file.bind_dir_filter_args(parser)
+    utilities.file.bind_reorder_args(parser)
     utils.bind_fig_save_args(parser)
     return parser.parse_args()
 
