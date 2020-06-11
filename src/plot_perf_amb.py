@@ -272,12 +272,12 @@ def distribution(ax_, dist_spec, xlabel):
     ax_.fill_between(x, 0, y, color='tan')   # label='Expected value ~=%g'%(x@y/sum(y)))
 
     ymax = max(y)
+    delta = (max(x)-min(x))*0.02
     for mu,sigma,w in dist_spec:
         if sigma==0:
-            ax_.arrow(mu,0,0,ymax*1.2, head_width=0.08, head_length=0.03, linewidth=3, color='k')
+            ax_.arrow(mu,0,0,ymax*1.2, width=delta*0.3, head_length=ymax*0.065, color='k')
             ax_.annotate(f'{w:g}', xy=(mu,ymax*1.3), ha='left')
 
-    delta = (max(x)-min(x))*0.02
     ax_.set_xlim([min(x)-delta, max(x)+delta])
     ax_.set_ylim([0, ymax*1.5])
     ax_.set_yticks([])
@@ -286,8 +286,11 @@ def distribution(ax_, dist_spec, xlabel):
 @plt_ax.reg
 def comp_straggler_dist(data, ax_):
     args = data[0].args
-    if 'dist' in args and args['induce']:
-        distribution(ax_, args['dist'], 'Induced computation delay')
+    l_ = lambda d_: distribution(ax_, d_, 'Induced computation delay')
+    if ('induce_comp_dist' in args) and (not args['induce_comp_dist'] is None):
+        l_(args['induce_comp_dist'])
+    elif 'dist' in args and args['induce']: # backward compatibility
+        l_(args['dist'])
 
 @plt_ax.reg
 def comm_straggler_dist(data, ax_):

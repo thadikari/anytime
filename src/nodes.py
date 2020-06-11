@@ -306,10 +306,12 @@ class AnytimeMiniBatchWorker(Worker):
             chck = lambda: self.elapsed() < time_limit
             # check if already have gone through all the slipts, if this happens then should increase the batch size
             start_, end_ = start_end(curr_partition)
+            # do at least one partition, otherwise will be sending all zeros
+            chk0 = tf.equal(curr_partition, 0)
             chk1 = tf.shape(placeholders[0][start_:end_])[0] > 0
             chk2 = tf.py_func(func=chck, inp=[], Tout=tf.bool)
             with tf.control_dependencies([tf.cond(chk1, okay, warn)]):
-                return tf.math.logical_and(chk1, chk2)
+                return tf.math.logical_or(chk0, tf.math.logical_and(chk1, chk2))
 
         def start_end(curr_partition):
             start_ = curr_partition*partition_size
