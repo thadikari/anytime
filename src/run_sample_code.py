@@ -35,7 +35,7 @@ def create_data_for_one_iteration(batch_size):
 
 
 
-batch_size = 10000
+batch_size = 100000
 '''
 This should be greater than what AMB can do within the given time limit.
 Otherwise AMB will print the following warning to `tf.logging` interface in runtime.
@@ -74,17 +74,19 @@ Compare the distributed and non-distributed versions by toggling `is_distributed
 
 if is_distributed:
 
-    import distributed as hvd
+    import strategy as hvd
+    import nodes as nds
     hvd.init()
     # Must call to initialize the mpi4py library.
 
-    dist = hvd.AnytimeMiniBatchDistributor(opt, amb_time_limit, amb_num_partitions)
+    dist = nds.AnytimeMiniBatchDistributor(opt, amb_time_limit, amb_num_partitions)
+    dist.set_strategy(hvd.SynchronousFac(work_dir=None))
     # Only the master will apply gradients using `GradientDescentOptimizer` logic.
 
     train_op = dist.minimize(placeholders=[x,y], cr_sum_loss=create_model_get_sum_loss, global_step=global_step)
     # `placeholders` must contain at least one element.
 
-    hooks = [hvd.BroadcastVariablesHook(dist)]
+    hooks = [nds.BroadcastVariablesHook(dist)]
     if hvd.is_master(): hooks.append(create_logging_hook())
     # Print logs only at the master
 
