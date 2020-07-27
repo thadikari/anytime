@@ -52,6 +52,7 @@ def parse_args():
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
 
     parser.add_argument('--cuda', help='set CUDA_VISIBLE_DEVICES differently if on same node', choices=['cpu_master', 'gpu_master', 'gpu_all'])
+    parser.add_argument('--gpus_per_node', help='number of gpus per node', type=int, default=-1)
 
     ut.learningrate.bind_learning_rates(parser)
     args = parser.parse_args()
@@ -84,7 +85,12 @@ def main():
     if (sgy.is_master() and _a.cuda=='cpu_master') or (not sgy.is_master() and _a.cuda=='gpu_master'):
         os.environ['CUDA_VISIBLE_DEVICES'] = ''
     elif _a.cuda=='gpu_all':
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(sgy.rank())
+        # https://stackoverflow.com/questions/9022496/how-to-determine-mpi-rank-process-number-local-to-a-socket-node
+        # local_rank = os.environ.get('OMPI_COMM_WORLD_LOCAL_RANK') #, sgy.rank())
+        # assuming one node has enough gpus for all workers
+        # and assuming consecutive ranks belong in same node. e.g. 0-3 in node 1, 4-7 in node 2 etc.
+        gpus_per_node = _a.gpus_per_node if _a.gpus_per_node>0 else num_workers
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(sgy.rank() % gpus_per_node)
     print('CUDA_VISIBLE_DEVICES [rank %d]: %s'%(sgy.rank(), str(os.environ.get('CUDA_VISIBLE_DEVICES', None))))
 
     if sgy.is_master():
@@ -102,6 +108,7 @@ def main():
 
     model = models.reg.get(_a.model)
     placeholders, create_model_get_sum_loss, (get_train_fd, get_test_fd), init_call = model(ds_args)
+    train_num_examples = model.train_num_examples
 
     global_step = tf.train.get_or_create_global_step()
     learning_rate = tf.placeholder(tf.float32, shape=[])
@@ -132,7 +139,8 @@ def main():
         mon_sess.run_step_fn(lambda step_context: init_call(step_context.session))
         step = 0
         while not mon_sess.should_stop():
-            lrate = scheduler(step)
+            epoch = step*_a.batch_size*num_workers/train_num_examples
+            lrate = scheduler(step, epoch)
             mon_sess.run(train_op, feed_dict={**get_train_fd(), learning_rate:lrate})
             step += 1
 

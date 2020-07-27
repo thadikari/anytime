@@ -13,11 +13,12 @@ import utilities.data.imagenet as imagenet
 def create_cifar(dataset_args):
     ds = du.make_dataset('cifar10', dataset_args)
     kwargs, feed_model = cifar.create_plh(with_data=False)
+    create_cifar.train_num_examples = ds.train_num_examples
 
     class ModelFac:
         def __call__(self, feature, target):
             logits = cifar.create_conv10(feature, **kwargs)
-            self.accuracy, sum_loss, self.avg_loss = du.compute_metrics(logits, target)
+            self.accuracy, sum_loss, self.avg_loss = du.compute_metrics_ex(logits, target)
             return sum_loss
         def get_metrics(self): return self.accuracy, self.avg_loss
 
@@ -33,11 +34,12 @@ def create_mnist(ds_name):
         class ModelFac:
             def __call__(self, feature, target):
                 logits = mnist.create_conv(feature)
-                self.accuracy, sum_loss, self.avg_loss = du.compute_metrics(logits, target)
+                self.accuracy, sum_loss, self.avg_loss = du.compute_metrics_ex(logits, target)
                 return sum_loss
             def get_metrics(self): return self.accuracy, self.avg_loss
 
         ds = du.make_dataset(ds_name, dataset_args)
+        mnist_inner.train_num_examples = ds.train_num_examples
         return ds.placeholders, ModelFac(), (ds.get_train_fd, ds.get_test_fd), ds.init
     return mnist_inner
 
@@ -51,12 +53,14 @@ register('mnist')
 def create_imagenet(ds_name, model):
     def imagenet_inner(dataset_args):
         ds = imagenet.make_dataset(ds_name, dataset_args)
+        imagenet_inner.train_num_examples = ds.train_num_examples
         kwargs, feed_model = model.create_plh(with_data=False)
 
         class ModelFac:
             def __call__(self, feature, target):
                 logits = model.create_model(feature, **kwargs)
-                self.accuracy, sum_loss, self.avg_loss = du.compute_metrics_topk(logits, target, 5)
+                self.accuracy = du.compute_accuracy_topk(logits, target, 5)
+                sum_loss, self.avg_loss = du.compute_losses_ex(logits, target)
                 return sum_loss
             def get_metrics(self): return self.accuracy, self.avg_loss
 

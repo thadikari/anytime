@@ -406,7 +406,7 @@ def parse_args():
     parser.add_argument('--legend_font_size', default=18, type=int)
     parser.add_argument('--tick_size', default=16, type=int)
 
-    utilities.file.bind_dir_filter_args(parser)
+    utilities.file.bind_filter_args(parser)
     utilities.file.bind_reorder_args(parser)
     utils.bind_fig_save_args(parser)
     return parser.parse_args()
