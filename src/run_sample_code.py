@@ -3,7 +3,7 @@ import numpy as np
 
 
 '''
-run this sample using `mpirun -n 3 python -u run_sample_code.py`.
+Run this sample using `mpirun -n 3 python -u run_sample_code.py`.
 Most of the code in here is similar to a traditional TF code, except the part highlighted below. 
 '''
 
