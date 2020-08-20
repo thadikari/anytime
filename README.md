@@ -27,19 +27,19 @@ mpi4py: 3.0.2
 tensorflow: 1.14.0
 ```
 
-## Sample comparison of Anytime and Fixed mini-batch (AMB and FMB)
-* In this section
-   * [`run_perf_amb.py`](src/run_perf_amb.py): generates data (see therewithin the applicable arguments).
-   * [`plot_perf_amb.py`](src/plot_perf_amb.py): plots data (see below for a sample).
-* m3.xlarge instances in Amazon EC2
-* Hub-and-spoke - 10 nodes and master
-* CIFAR10 dataset
-* Induced stragglers
-* RMS-prop optimizer
-* Generated with following arguments for `run_perf_amb.py`:
-    * `cifar10 fmb rms 242 --test_size 100 --induce --decay_rate 0.93`
-    * `cifar10 amb rms 356 --amb_time_limit 6.2 --amb_num_partitions 16 --test_size 100  --induce --decay_rate 0.93`
-* `python plot_perf_amb.py --short_label --data_dir ../data/800_cifar10/set2`
+## Comparing Anytime and Fixed mini-batch (AMB and FMB)
+* Generate FMB data using the following command:
+   * `mpirun -n 2 python -u run_perf_amb.py cifar10 fmb rms 242 --test_size 100`
+   * `cifar10`: CIFAR10 dataset
+   * `fmb rms 242`: FMB approach with RMS-prop optimizer and a mini-batch size 242
+   * See in [`run_perf_amb.py`](src/run_perf_amb.py) for other applicable arguments.
+* Generate AMB data with following command:
+    * `mpirun -n 2 python -u run_perf_amb.py cifar10 amb rms 356 --amb_time_limit 6.2 --amb_num_partitions 16 --test_size 100`
+* If necessary can induce stragglers by adding the argument `--induce niagara`.
+    * Stragglers are induced by calling `sleep` for a random amount of time before the computations. The sleep time is sampled from a mixture of 1d Gaussian distributions as defined below. For example, `niagara` specifies one mixture distribution comprising of four components. See for details the definition of `niagara` in [`run_perf_amb.py`](src/run_perf_amb.py). In each component the first argument specifies the mean, second the standard deviation, and the third the weight of the component.
+* After generating data, plot the results as follows.
+    * `python plot_perf_amb.py --data_dir ../data/800_cifar10/set2`
+    * See the arguments within [`plot_perf_amb.py`](src/plot_perf_amb.py) for applicable arguments.
 
 <img src="data/800_cifar10/set2/all_plots.png?raw=true"/>
 
