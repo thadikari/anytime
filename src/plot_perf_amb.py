@@ -25,26 +25,13 @@ def proc_csv(file_path):
         print(f'Error reading: {file_path}', e)
         return {}
 
-class DataRoot:
-    def __init__(self, dir, label):
-        self.dir = dir
-        self.label = label
-        path_ = lambda s_: os.path.join(_a.data_dir, dir, s_)
+class DataRoot(utilities.file.BundleBase):
+    def load(self):
+        path_ = lambda s_: os.path.join(_a.data_dir, self.dir, s_)
         self.master_data = proc_csv(path_('master_stats.csv'))
         self.worker_data = proc_csv(path_('worker_stats.csv'))
         self.collect_data = proc_csv(path_('collect_stats.csv'))
         self.args = json.load(open(path_('args.json')))
-
-    def get_label(self):
-        if _a.resub:
-            dir_name = self.dir
-            for pattern,repl in _a.resub:
-                dir_name = re.sub(pattern,repl,dir_name)
-            return dir_name
-        else:
-            return self.label
-
-    def get_color(self): return None
 
 
 plt_ax = utilities.Registry()
@@ -92,8 +79,8 @@ def cum_(data, ax_):
         y_val = dd[y_key]
         num_ele = int(len(y_val)*1) #_a.fraction)
         y_val = y_val[:num_ele]
-        ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_, color=root.get_color(),
-                               linewidth=1.5, label=root.get_label())
+        ax_.plot(dd[x_key][:num_ele], np.cumsum(y_val)*mul_,
+                               linewidth=1.5, label=root.label)
     utils.fmt_ax(ax_, x_label, y_label, leg=1)
     ax_.grid(True, which='both')
     set_x_sci(ax_)
@@ -118,7 +105,7 @@ def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False
             bins = mid_val + (np.arange(10)-4)*binwidth
             bins += offset(bins[0])
 
-        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, linewidth=0, color=root.get_color(), label=root.get_label())
+        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, linewidth=0, label=root.label)
         freq_ll.append(freq)
         bins_ll.append(bins)
 
@@ -227,8 +214,7 @@ def plot_(data, ax_, x_key, y_key, x_label, y_label, filter=True, ysci=False):
             y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
         xval = dd[x_key][:num_ele]
         if x_key=='time': xval -= min(xval) 
-        ax_.plot(xval, y_val, color=root.get_color(),
-                                linewidth=1.5, label=root.get_label())
+        ax_.plot(xval, y_val, linewidth=1.5, label=root.label)
     utils.fmt_ax(ax_, x_label, y_label, leg=1)
     if _a.ylog: ax_.set_yscale('log')
     ax_.grid(True, which='both')
@@ -365,14 +351,7 @@ panel_maker('panel_all', panel_all)
 
 
 def main():
-    dirs = utilities.file.filter_directories(_a, _a.data_dir)
-    if not dirs: exit()
-
-    labels = utilities.file.gen_unique_labels(dirs)
-    zipped = list(zip(dirs, labels))
-    utilities.file.reorder(_a, zipped)
-    data = [DataRoot(*args) for args in zipped]
-
+    data = utilities.file.load_dirs(_a, _a.data_dir, DataRoot)
     get_path = lambda name_: os.path.join(_a.data_dir, name_)
     def save_hdl(name_=_a.type):
         if _a.ylog: name_ = f'{name_}_ylog'
@@ -396,23 +375,18 @@ def parse_args():
     parser.add_argument('--remove_hist_outliers', action='store_true')
     parser.add_argument('--outlier_threshold', type=float, default=0.00005)
 
-    parser.add_argument('--resub', action='append', nargs=2, metavar=('pattern','substitute'))
-
     parser.add_argument('--ylog', action='store_true')
     parser.add_argument('--filter_sigma', default=0, type=float)
     # parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 
-    parser.add_argument('--font_size', default=20, type=int)
-    parser.add_argument('--legend_font_size', default=18, type=int)
-    parser.add_argument('--tick_size', default=16, type=int)
-
     utilities.file.bind_filter_args(parser)
     utilities.file.bind_reorder_args(parser)
     utils.bind_fig_save_args(parser)
+    utils.bind_init_args(parser)
     return parser.parse_args()
 
 if __name__ == '__main__':
     _a = parse_args()
     print('[Arguments]', vars(_a))
-    utils.init(_a.font_size, legend_font_size=_a.legend_font_size, tick_size=_a.tick_size)
+    utils.init(args=_a)
     main()
