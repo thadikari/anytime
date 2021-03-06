@@ -45,9 +45,10 @@ def parse_args():
     parser.add_argument('--async_master_batch_min', type=int, default=4)
     parser.add_argument('--async_delay_std', help='std.dev of 0 mean gaussian, delay=abs(sample)', type=float, default=-1)
     parser.add_argument('--induce_comp', help='distribution for inducing computation stragglers', choices=straggler_reg.keys())
+    parser.add_argument('--weight_decay', type=float, default=5e-4)
 
     parser.add_argument('--log_freq', default=1, type=int)
-    parser.add_argument('--last_step', default=400000, type=int)
+    parser.add_argument('--last_step', default=0, type=int)
     parser.add_argument('--test_size', help='size of the subset from test dataset', default=-1, type=int)
     parser.add_argument('--data_dir', default=ut.file.resolve_data_dir('distributed'), type=str)
 
@@ -78,7 +79,7 @@ def main():
     num_workers = sgy.num_workers()
     scheduler = ut.learningrate.lrate_scheduler(_a)(_a, _a.last_step)
     lrate_str = scheduler.to_str()
-    run_id = f'{_a.model}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}{sgy_args}__{lrate_str}__{_a.induce_comp}_{num_workers}'
+    run_id = f'{_a.model}__{_a.dist_opt}_{_a.intr_opt}_{_a.batch_size}{amb_args}{sgy_args}__{lrate_str}_{_a.weight_decay}__{_a.induce_comp}_{num_workers}'
     logs_dir = os.path.join(_a.data_dir, run_id)
     ds_args = {'batch_size':_a.batch_size, 'test_size':_a.test_size}
 
@@ -114,8 +115,8 @@ def main():
     learning_rate = tf.placeholder(tf.float32, shape=[])
     opt = opt_reg.get(_a.intr_opt)(learning_rate)
 
-    if _a.dist_opt == 'fmb': dist = nds.FixedMiniBatchDistributor(opt)
-    elif _a.dist_opt == 'amb': dist = nds.AnytimeMiniBatchDistributor(opt,
+    if _a.dist_opt == 'fmb': dist = nds.FixedMiniBatchDistributor(opt, _a.weight_decay)
+    elif _a.dist_opt == 'amb': dist = nds.AnytimeMiniBatchDistributor(opt, _a.weight_decay,
                                       _a.amb_time_limit, _a.amb_num_partitions)
     if _a.induce_comp is not None: dist.set_straggler(induce_dist=straggler_reg.get(_a.induce_comp))
 
@@ -127,8 +128,8 @@ def main():
     train_op = dist.minimize(placeholders, create_model_get_sum_loss, global_step=global_step)
     accuracy, avg_loss = create_model_get_sum_loss.get_metrics()
 
-    hooks = [nds.BroadcastVariablesHook(dist),
-             tf.train.StopAtStepHook(last_step=_a.last_step)]
+    hooks = [nds.BroadcastVariablesHook(dist)]
+    if _a.last_step>0: hooks.append(tf.train.StopAtStepHook(last_step=_a.last_step))
     if sgy.is_master():
         hooks.append(nds.CSVLoggingHook(every_n_iter=_a.log_freq,
                      train_tensors={'step':global_step, 'loss':avg_loss, 'learning_rate':learning_rate},

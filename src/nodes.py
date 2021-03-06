@@ -141,8 +141,9 @@ class Distributor:
 stat_names = ('last_send', 'last_recv', 'last_exit', 'sleep_time', 'compute_time')
 
 class Master:#(tf.train.Optimizer):
-    def __init__(self, optimizer):
+    def __init__(self, optimizer, weight_decay):
         self._optimizer = optimizer
+        self.weight_decay = weight_decay
 
     def set_straggler(self, *args): pass
     def set_strategy(self, strategy): self.strategy = strategy.make_master()
@@ -155,7 +156,7 @@ class Master:#(tf.train.Optimizer):
             return vars, self.apply_gradients(grads_and_vars, global_step)
 
     def compute_gradients(self, placeholders, cr_sum_loss, global_step):
-        grads_and_vars = self._optimizer.compute_gradients(cr_sum_loss(*placeholders))
+        grads_and_vars = comp_grads_total_loss(self._optimizer, cr_sum_loss(*placeholders), self.weight_decay)
         grads, vars = zip(*grads_and_vars)
         if sgy.size() > 1:
             shapes, Tout = zip(*[(grad.shape.as_list(), grad.dtype) for grad in grads])
@@ -219,8 +220,9 @@ class WorkerTag:
 
 
 class Worker:
-    def __init__(self, optimizer):
+    def __init__(self, optimizer, weight_decay):
         self._optimizer = optimizer
+        self.weight_decay = weight_decay
         self.prof = WorkerTag()
         self.straggler = None
 
@@ -280,11 +282,21 @@ class Worker:
                 with ctrl_dep([tf.assign_add(global_step, 1)]):
                     return py_exc(lambda:self.prof.tag('exit'))
 
+    def comp_grads_total_loss(self, sum_loss):
+        return comp_grads_total_loss(self._optimizer, sum_loss, self.weight_decay)
+
+def comp_grads_total_loss(optimizer, sum_loss, weight_decay):
+    conv_var = [var for var in tf.trainable_variables()]
+    # print(*conv_var, sep='\n'), exit()
+    l2_loss = tf.add_n([tf.nn.l2_loss(var) for var in conv_var])
+    total_loss = l2_loss*weight_decay + sum_loss
+    return optimizer.compute_gradients(total_loss)
+
 
 class FixedMiniBatchWorker(Worker):
     def compute_gradients(self, _, placeholders, cr_sum_loss):
         batch_size = tf.shape(placeholders[0])[0]
-        return self._optimizer.compute_gradients(cr_sum_loss(*placeholders)), batch_size
+        return self.comp_grads_total_loss(cr_sum_loss(*placeholders)), batch_size
 
 
 class AnytimeMiniBatchWorker(Worker):
@@ -321,7 +333,7 @@ class AnytimeMiniBatchWorker(Worker):
         def body(curr_partition, *accs):
             start_, end_ = start_end(curr_partition)
             sum_loss = cr_sum_loss(*(pl[start_:end_] for pl in placeholders))
-            grads_and_vars = self._optimizer.compute_gradients(sum_loss)
+            grads_and_vars = self.comp_grads_total_loss(sum_loss)
             grads, self.vars = zip(*grads_and_vars)
             # print(list(ss.get_shape().as_list() for ss in self.vars))
             ret_accs = list(acc+grad for acc,grad in zip(accs, grads))
@@ -337,11 +349,12 @@ class AnytimeMiniBatchWorker(Worker):
 
 
 class FixedMiniBatchDistributor(Distributor):
-    def __init__(self, optimizer):
-        super().__init__(Master(optimizer) if sgy.rank()==0 else FixedMiniBatchWorker(optimizer))
+    def __init__(self, optimizer, weight_decay):
+        obj = Master if sgy.rank()==0 else FixedMiniBatchWorker
+        super().__init__(obj(optimizer, weight_decay))
 
 
 class AnytimeMiniBatchDistributor(Distributor):
-    def __init__(self, optimizer, *args, **kwargs):
-        super().__init__(Master(optimizer) if sgy.rank()==0 else
-                         AnytimeMiniBatchWorker(optimizer).init(*args, **kwargs))
+    def __init__(self, optimizer, weight_decay, *args, **kwargs):
+        super().__init__(Master(optimizer, weight_decay) if sgy.rank()==0 else
+                         AnytimeMiniBatchWorker(optimizer, weight_decay).init(*args, **kwargs))
