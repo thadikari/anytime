@@ -91,7 +91,7 @@ def cumsum_vs_step(*args):
 
 
 def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False):
-    freq_ll, bins_ll = [], []
+    bins_ll = []
     offset = lambda min_: 0 if min_ > -0.5*binwidth else (-min_-0.5*binwidth)
 
     for root in data:
@@ -105,32 +105,18 @@ def hist_(data, ax_, func, x_label, binwidth=None, is_time=True, mean_line=False
             bins = mid_val + (np.arange(10)-4)*binwidth
             bins += offset(bins[0])
 
-        freq, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, linewidth=0, label=root.label)
-        freq_ll.append(freq)
+        _, bins, patches = ax_.hist(arr, bins=bins, alpha=.6, edgecolor=[1]*4, linewidth=0, label=root.label)
         bins_ll.append(bins)
 
         if mean_line:
             mean_ = arr.mean()
-            # min_ylim, max_ylim = ax_.get_ylim()
             clr_no_alpha = patches[0]._facecolor[:-1]
             ax_.axvline(mean_, color=clr_no_alpha, linestyle='--', linewidth=2)
-            #ax_.text(mean_*1.1, max_ylim*0.9, 'Mean: {:.2f}'.format(mean_))
 
-    if not len(freq_ll)>0: return
-
-    def get_xlims_(freq, bins):
-        avg_freq = np.max(freq)  # np.mean(freq[freq>0])
-        valid = (freq > avg_freq*_a.outlier_threshold).nonzero()[0]
-        mn, mx = bins[valid[0]]-3*binwidth, bins[valid[-1]]+6*binwidth
-        off = offset(mn)
-        return mn+off, mx+off
-
-    if _a.remove_hist_outliers:
-        mins, maxs = zip(*[get_xlims_(*its) for its in zip(freq_ll, bins_ll)])
-        xmin, xmax = min(mins), max(maxs)
-        ax_.set_xlim([xmin, xmax])
-    else:
-        xmax = max(bins.max() for bins in bins_ll)
+    xmax = max(bins.max() for bins in bins_ll) if _a.xmax is None else _a.xmax
+    ax_.set_xlim(right=xmax)
+    if not _a.ymax is None: ax_.set_ylim(top=_a.ymax)
+    # ax_.relim(), ax_.autoscale_view()
 
     if is_time: x_label = utils.set_best_time_scale(ax_, xmax, x_label)
     else: set_x_sci(ax_)
@@ -211,7 +197,8 @@ def plot_(data, ax_, x_key, y_key, x_label, y_label, filter=True, ysci=False):
         num_ele = int(len(dd[y_key])*1) #_a.fraction)
         y_val = dd[y_key][:num_ele]
         if filter and _a.filter_sigma:
-            y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
+            # y_val = gaussian_filter1d(y_val, sigma=_a.filter_sigma)
+            y_val = pandas.Series(y_val).ewm(span=_a.filter_sigma).mean()
         xval = dd[x_key][:num_ele]
         if x_key=='time': xval -= min(xval) 
         ax_.plot(xval, y_val, linewidth=1.5, label=root.label)
@@ -366,18 +353,17 @@ def parse_args():
     parser.add_argument('--type', default='panel_main', choices=plt_fig.keys())
     parser.add_argument('--subset', nargs='+', choices=plt_ax.keys())
     parser.add_argument('--separate', help='if [type] is a panel with multple plots, save or display all axes separately', action='store_true')
-    # parser.add_argument('--subplot', help='subplot config number of rows and cols', default=None, type=int, nargs=2)
     parser.add_argument('--ax_size', help='width, height {scale} per axis', type=float, nargs='+', action=utils.AxSizeAction, default=[8,5])
 
     ## histogram-related arguments
     parser.add_argument('--bw_time', help='time histogram binwidth', type=float, default=0.01)
     parser.add_argument('--hist_ylog', action='store_true')
-    parser.add_argument('--remove_hist_outliers', action='store_true')
-    parser.add_argument('--outlier_threshold', type=float, default=0.00005)
 
+    ## common arguments
+    parser.add_argument('--xmax', type=float)
+    parser.add_argument('--ymax', type=float)
     parser.add_argument('--ylog', action='store_true')
     parser.add_argument('--filter_sigma', default=0, type=float)
-    # parser.add_argument('--fraction', help='drop time series data after this fraction', default=1, type=float)
 
     utilities.file.bind_filter_args(parser)
     utilities.file.bind_reorder_args(parser)
