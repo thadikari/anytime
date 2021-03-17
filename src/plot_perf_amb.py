@@ -282,7 +282,8 @@ plt_fig = utilities.Registry()
 
 def single_plot(plt_ax_handle):
     def inner(data, sv_):
-        plt_ax_handle(data, plt.gca())
+        axes, fig = utils.get_subplot_axes(_a.ax_size, 1)
+        plt_ax_handle(data, axes[0])
         sv_()
     return inner
 for name_,hdl_ in plt_ax.items(): plt_fig.put(name_, single_plot(hdl_))
