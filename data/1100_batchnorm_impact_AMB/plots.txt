@@ -1,3 +1,0 @@
-python -u ../../src/plot_perf_amb.py --data_dir ./ --and imag amb --subset loss_vs_step accuracy_vs_step --ax_size 9 9 --filter_sigma 5 --nats --rev --save --silent
-
-python -u ../../src/plot_perf_amb.py --data_dir ./ --and cif amb --subset loss_vs_step accuracy_vs_step --ax_size 9 9 --filter_sigma 5 --nats --rev --save --silent
