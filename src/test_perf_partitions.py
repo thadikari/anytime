@@ -138,7 +138,7 @@ def plot(file_name):
         micro_batch_size_ll = batch_size/num_partitions_ll
         # ax.plot(num_partitions_ll, time_per_step_ll, label='Batch size=%d'%batch_size)
         ax1.plot(num_partitions_ll, time_per_step_ll, label='$N$=%d'%batch_size)
-        ax2.plot(micro_batch_size_ll, time_per_sample_ll, label='$N$=%d'%batch_size)
+        ax2.plot(micro_batch_size_ll, time_per_sample_ll, label='$B$=%d'%batch_size)
 
     def fmt_ax(ax_, xl_, yl_):
         utils.fmt_ax(ax_, xl_, yl_, leg=1)
@@ -147,7 +147,7 @@ def plot(file_name):
         ax_.set_xscale('log', basex=2); ax_.set_yscale('log');
 
     fmt_ax(ax1, 'Number of microbatches $P$', 'Time per step')
-    fmt_ax(ax2, 'Microbatch size $N/P$', 'Time per sample')
+    fmt_ax(ax2, 'Microbatch size $B/P$', 'Time per sample')
     plt.tight_layout()
 
     if args.save:
